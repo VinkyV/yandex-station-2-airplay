@@ -42,38 +42,6 @@ pcm_owner() {
   echo "Свободно"
 }
 
-# Громкость: проверено на слух — громкостью управляют КАНАЛЫ усилителя (numid=2,3),
-# а «мастер» (numid=1) стоит на заводском 214 и почти не влияет. Поэтому ползунок
-# двигает только каналы: 100% = заводские 159 (обычная громкость колонки), 0% = тишина.
-# Ниже ~25% звука практически нет — это особенность железа, а не ползунка.
-AMP_MASTER=1
-AMP_CH1=2
-AMP_CH2=3
-STOCK_MASTER=214
-STOCK_CH=159
-
-raw_get() { "$L" "$T/bin/amixer" cget numid=$1 2>/dev/null | sed -n 's/^ *: values=\([0-9]*\).*/\1/p' | head -1; }
-raw_set() { "$L" "$T/bin/amixer" -q cset numid=$1 "$2" >/dev/null 2>&1; }
-
-volume() {
-  v=$(raw_get $AMP_CH1)
-  if [ -z "$v" ]; then
-    "$L" "$T/bin/amixer" sget Master 2>/dev/null | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1
-    return
-  fi
-  p=$(( (v * 100 + STOCK_CH / 2) / STOCK_CH ))
-  [ "$p" -lt 0 ] && p=0
-  [ "$p" -gt 100 ] && p=100
-  echo "$p"
-}
-
-set_volume() {
-  c=$(( ($1 * STOCK_CH + 50) / 100 ))
-  raw_set $AMP_MASTER $STOCK_MASTER
-  raw_set $AMP_CH1 "$c"
-  raw_set $AMP_CH2 "$c"
-}
-
 status_json() {
   SP=$(ps w | awk '/[s]hairport-sync/ {print $1}' | head -1)
   SH=0; [ -n "$SP" ] && SH=1
@@ -88,7 +56,6 @@ status_json() {
     LPORT=$(printf '%s\n' "$LS" | awk '/LISTEN/ {print $9}' | sed 's/.*://' | head -1)
     [ -z "$LPORT" ] && LPORT="—"
   fi
-  V=$(volume); [ -z "$V" ] && V=0
   UPT=$(cut -d. -f1 /proc/uptime)
   FREE=$(df -h /data 2>/dev/null | awk 'NR==2 {print $4}')
   TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
@@ -102,7 +69,7 @@ status_json() {
     if [ "$FRQ" -ge 4000 ] 2>/dev/null; then BAND="5 ГГц"; else BAND="2.4 ГГц"; fi
   fi
   FW=$(cat /system/vendor/quasar/version_full 2>/dev/null)
-  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"volume\":${V:-0},\"pcm\":\"$(pcm_owner)\",\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\"}"
+  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"pcm\":\"$(pcm_owner)\",\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\"}"
 }
 
 do_action() {
@@ -125,12 +92,6 @@ do_action() {
       MALLOC_ARENA_MAX=2 CA_CERTIFICATES=/system/vendor/quasar/ca-certificates.crt \
         nohup /system/vendor/quasar/maind --mediad >>/data/quasar/mediad.log 2>&1 </dev/null &
       send "text/plain; charset=utf-8" "медиа-демон перезапущен" ;;
-    volume)
-      V=$(qval v)
-      case "$V" in ''|*[!0-9]*) send "text/plain; charset=utf-8" "плохое значение"; return;; esac
-      [ "$V" -gt 100 ] && V=100
-      set_volume "$V"
-      send "text/plain; charset=utf-8" "Громкость $V%" ;;
     reboot)
       send "text/plain; charset=utf-8" "перезагрузка через 2 секунды"
       (sleep 2; sync; reboot) >/dev/null 2>&1 &
@@ -192,11 +153,6 @@ pre{white-space:pre-wrap;margin:10px 0 0}
   <div class="row"><span>Звук занят</span><b id="v-pcm" class="dim">…</b></div>
 </div>
 
-<div class="card">
-  <div class="hdr"><span class="dim">Громкость</span><b id="v-vol">…</b></div>
-  <input id="vol" type="range" min="0" max="100" step="1" value="50">
-  <div class="small">Отпусти ползунок — применится</div>
-</div>
 
 <div class="card">
   <div class="row"><span>Сеть</span><b id="v-net" class="dim">…</b></div>
@@ -231,9 +187,7 @@ pre{white-space:pre-wrap;margin:10px 0 0}
 </div>
 
 <script>
-var out=document.getElementById('out'),
-    vol=document.getElementById('vol'),volLabel=document.getElementById('v-vol'),
-    volBusy=false;
+var out=document.getElementById('out');
 
 function show(t){out.textContent=t}
 function cls(el,good){el.className=good?'ok':'bad'}
@@ -255,7 +209,6 @@ function paint(s){
   var u=document.getElementById('v-upd');
   u.textContent=s.updatesd>0?'Включён':'Выключен';cls(u,s.updatesd===0);
   var p=document.getElementById('v-pcm');p.textContent=s.pcm||'—';p.className='dim';
-  if(!volBusy){vol.value=s.volume;volLabel.textContent=s.volume+'%'}
   document.getElementById('v-net').textContent=(s.ip||'—')+' · '+(s.ssid||'—')+' · '+(s.band||'—');
   document.getElementById('v-fw').textContent=s.fw||'—';
   document.getElementById('v-free').textContent=s.free||'—';
@@ -268,15 +221,6 @@ function refresh(){
   fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(paint).catch(function(){});
 }
 refresh();setInterval(refresh,5000);
-
-vol.oninput=function(){volBusy=true;volLabel.textContent=vol.value+'%'};
-vol.onchange=function(){
-  fetch('/action?do=volume&v='+vol.value)
-    .then(function(r){return r.text()}).then(function(t){
-      if(t.indexOf('Громкость')<0)show(t);
-      setTimeout(function(){volBusy=false},800);
-    }).catch(function(e){show('ошибка: '+e);volBusy=false});
-};
 
 document.querySelectorAll('[data-a]').forEach(function(b){b.onclick=function(){
   if(b.dataset.a==='reboot'&&!confirm('Перезагрузить колонку?'))return;
