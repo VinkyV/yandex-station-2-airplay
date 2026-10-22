@@ -180,10 +180,15 @@ input[type=text]{width:100%;padding:10px;border-radius:10px;border:1px solid #2d
 input[type=range]{width:100%;accent-color:#79a8ff}
 .small{font-size:13px;color:#8b93a1;margin-top:10px}
 .hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.cols{display:grid;grid-template-columns:1fr;gap:0}
+@media (min-width:900px){.cols{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}}
+.cols>.card{margin-bottom:14px}
 pre{white-space:pre-wrap;margin:10px 0 0}
 </style></head><body>
 <h1>Яндекс Станция Midi</h1>
 <div class="sub">Root · AirPlay · Обновления выключены</div>
+
+<div class="cols">
 
 <div class="card">
   <div class="hdr"><span class="dim">Сейчас звучит</span><b id="now">…</b></div>
@@ -216,6 +221,8 @@ pre{white-space:pre-wrap;margin:10px 0 0}
   <div class="row"><span>/tee</span><b id="v-tee" class="dim">…</b></div>
   <div class="row"><span>Сеть</span><b id="v-net" class="dim">…</b></div>
   <div class="row"><span>Прошивка</span><b id="v-fw" class="dim">…</b></div>
+</div>
+
 </div>
 
 <div class="card">
