@@ -83,14 +83,15 @@ while :; do
 
     if [ "$AIRPLAY_WAS_ON" = "1" ]; then
       IDLE_COUNT=$((IDLE_COUNT+1))
-      if [ "$IDLE_COUNT" -ge 2 ]; then
-        echo "$(date): AirPlay закончился — перезапускаю приёмник, возвращаю Алису" >> "$LOG"
+      if [ "$IDLE_COUNT" -ge 1 ]; then
+        echo "$(date): AirPlay закончился — возвращаю Алису" >> "$LOG"
+        # приёмник отпускает устройство, а Алису поднимаем сразу: она нужнее,
+        # приёмник всё равно вернётся в сеть за пару секунд
         for p in $(ps w | awk '/[s]hairport-sync -c \/data\/local\/opt\/airplay2/ {print $1}'); do kill "$p" 2>/dev/null; done
-        sleep 1
-        wait_pcm_free
-        /data/local/bin/airplay2-daemon.sh
         wait_pcm_free
         start_mediad
+        nohup /data/local/bin/airplay2-daemon.sh >/dev/null 2>&1 &
+        echo "$(date): Алиса поднята, приёмник возвращается" >> "$LOG"
         AIRPLAY_WAS_ON=0
         IDLE_COUNT=0
       fi
@@ -98,5 +99,5 @@ while :; do
       start_mediad
     fi
   fi
-  sleep 4
+  sleep 2
 done
