@@ -20,6 +20,27 @@ playing() {
   LD_LIBRARY_PATH=/data/local/opt/tools/lib "$L" /data/local/opt/tools/bin/lsof -nP -a -p "$P" -i TCP -s TCP:ESTABLISHED 2>/dev/null | grep -q ESTABLISHED
 }
 
+
+# Держит ли кто-нибудь устройство воспроизведения
+pcm_busy() {
+  for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    for f in /proc/$p/fd/*; do
+      t=$(readlink "$f" 2>/dev/null)
+      case "$t" in *pcmC0D0p*) return 0;; esac
+    done
+  done
+  return 1
+}
+
+# Ждём, пока устройство освободится (приёмник отпускает его не сразу)
+wait_pcm_free() {
+  i=0
+  while pcm_busy && [ "$i" -lt 15 ]; do
+    sleep 1; i=$((i+1))
+  done
+  [ "$i" -gt 0 ] && echo "$(date): ждал освобождения звука ${i}с" >> "$LOG"
+}
+
 start_mediad() {
   # Если экземпляров больше одного (лаунчер успевает поднять свой), они дерутся за звук
   # и Алиса молчит. Оставляем ровно один.
@@ -66,7 +87,9 @@ while :; do
         echo "$(date): AirPlay закончился — перезапускаю приёмник, возвращаю Алису" >> "$LOG"
         for p in $(ps w | awk '/[s]hairport-sync -c \/data\/local\/opt\/airplay2/ {print $1}'); do kill "$p" 2>/dev/null; done
         sleep 1
+        wait_pcm_free
         /data/local/bin/airplay2-daemon.sh
+        wait_pcm_free
         start_mediad
         AIRPLAY_WAS_ON=0
         IDLE_COUNT=0
