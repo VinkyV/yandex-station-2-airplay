@@ -23,13 +23,21 @@ T2=/data/local/opt/airplay2
 AIRPLAY_WAS_ON=0
 IDLE_COUNT=0
 LAST_REVIVE=0
+LED=/data/local/bin/led-lamp.sh
+LED_PATTERN=tricolor
 
 sp_pid() { ps w | awk '/[s]hairport-sync -c \/data\/local\/opt\/airplay2/ {print $1}' | head -1; }
 
 playing() {
+  # Признак игры — приёмник держит ALSA-устройство воспроизведения.
+  # Проверять по TCP нельзя: AirPlay 2 держит служебное соединение и после остановки.
   P=$(sp_pid)
   [ -z "$P" ] && return 1
-  LD_LIBRARY_PATH=/data/local/opt/tools/lib "$L" /data/local/opt/tools/bin/lsof -nP -a -p "$P" -i TCP -s TCP:ESTABLISHED 2>/dev/null | grep -q ESTABLISHED
+  for f in /proc/$P/fd/*; do
+    t=$(readlink "$f" 2>/dev/null)
+    case "$t" in *pcmC0D0p*) return 0;; esac
+  done
+  return 1
 }
 
 
@@ -85,18 +93,28 @@ while :; do
   if playing; then
     if [ "$AIRPLAY_WAS_ON" = "0" ]; then
       echo "$(date): AirPlay пошёл — освобождаю звук" >> "$LOG"
+      [ -x "$LED" ] && "$LED" start "$LED_PATTERN" >/dev/null 2>&1
       AIRPLAY_WAS_ON=1
     fi
     IDLE_COUNT=0
+    # подсветка должна дышать всё время, пока идёт AirPlay
+    if [ -x "$LED" ] && [ ! -f /run/led-lamp.pid ]; then
+      "$LED" start "$LED_PATTERN" >/dev/null 2>&1
+    fi
     PID=$(pids_matching '/system/vendor/quasar/maind --mediad' | head -1)
     [ -n "$PID" ] && kill "$PID" 2>/dev/null
   else
+    # AirPlay не играет — подсветку гасим всегда, даже если распорядитель
+    # перезапускался и не помнит, что её включал
+    [ -x "$LED" ] && [ -f /run/led-lamp.pid ] && "$LED" stop >/dev/null 2>&1
+
     ps w | grep -q '[s]hairport-sync -c /data/local/opt/airplay2' || revive_receiver
 
     if [ "$AIRPLAY_WAS_ON" = "1" ]; then
       IDLE_COUNT=$((IDLE_COUNT+1))
       if [ "$IDLE_COUNT" -ge 1 ]; then
         echo "$(date): AirPlay закончился — возвращаю Алису" >> "$LOG"
+        [ -x "$LED" ] && "$LED" stop >/dev/null 2>&1
         # приёмник отпускает устройство, а Алису поднимаем сразу: она нужнее,
         # приёмник всё равно вернётся в сеть за пару секунд
         for p in $(ps w | awk '/[s]hairport-sync -c \/data\/local\/opt\/airplay2/ {print $1}'); do kill "$p" 2>/dev/null; done
