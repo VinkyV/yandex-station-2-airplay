@@ -4,6 +4,18 @@
 #   - сессия кончилась -> приёмник перезапускается (отпускает звук), демон колонки поднимается
 #   - приёмник пропал -> поднимаем заново (не чаще раза в минуту)
 # В AirPlay 2 приёмник слушает НЕ 5000, а случайный порт, поэтому сессию ловим по pid + lsof.
+# Поиск процессов по подстроке командной строки через /proc (без ps+grep:
+# шаблон легко совпадает с командной строкой того, кто его запустил).
+pids_matching() {
+  for d in /proc/[0-9]*; do
+    pid=${d#/proc/}
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$PPID" ] && continue
+    cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+    case "$cmd" in *"$1"*) echo "$pid";; esac
+  done
+}
+
 LOG=/data/local/tmp/audio-owner.log
 L=/data/local/opt/tools/lib/ld-musl-aarch64.so.1
 T2=/data/local/opt/airplay2
@@ -44,7 +56,7 @@ wait_pcm_free() {
 start_mediad() {
   # Если экземпляров больше одного (лаунчер успевает поднять свой), они дерутся за звук
   # и Алиса молчит. Оставляем ровно один.
-  PIDS=$(ps w | awk '/[m]aind --mediad/ {print $1}')
+  PIDS=$(pids_matching '/system/vendor/quasar/maind --mediad')
   N=$(printf '%s\n' "$PIDS" | grep -c .)
   if [ "$N" -gt 1 ]; then
     for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
@@ -76,7 +88,7 @@ while :; do
       AIRPLAY_WAS_ON=1
     fi
     IDLE_COUNT=0
-    PID=$(ps w | awk '/[m]aind --mediad/ {print $1}' | head -1)
+    PID=$(pids_matching '/system/vendor/quasar/maind --mediad' | head -1)
     [ -n "$PID" ] && kill "$PID" 2>/dev/null
   else
     ps w | grep -q '[s]hairport-sync -c /data/local/opt/airplay2' || revive_receiver
