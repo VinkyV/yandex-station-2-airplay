@@ -69,7 +69,50 @@ status_json() {
     if [ "$FRQ" -ge 4000 ] 2>/dev/null; then BAND="5 ГГц"; else BAND="2.4 ГГц"; fi
   fi
   FW=$(cat /system/vendor/quasar/version_full 2>/dev/null)
-  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"pcm\":\"$(pcm_owner)\",\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\"}"
+
+  # --- нагрузка ---
+  LOAD=$(cat /proc/loadavg)
+  L1=$(printf '%s' "$LOAD" | awk '{print $1}')
+  L5=$(printf '%s' "$LOAD" | awk '{print $2}')
+  L15=$(printf '%s' "$LOAD" | awk '{print $3}')
+  PROCS=$(printf '%s' "$LOAD" | awk '{print $4}')
+
+  # --- процессор: разница /proc/stat с прошлым запросом ---
+  CPU=$(awk '/^cpu / {t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6}' /proc/stat)
+  PREV=$(cat /tmp/panel.stat 2>/dev/null)
+  if [ -n "$PREV" ]; then
+    CUR=1
+  else
+    sleep 0.4; CUR=0
+  fi
+  eval set -- $CPU
+  T2=$1; I2=$2
+  CPUPCT=""
+  if [ -n "$PREV" ]; then
+    set -- $PREV; T1=$1; I1=$2
+    DT=$((T2-T1)); DI=$((I2-I1))
+    [ "$DT" -gt 0 ] && CPUPCT=$(( (100 * (DT - DI)) / DT ))
+  fi
+  echo "$T2 $I2" > /tmp/panel.stat
+  [ -z "$CPUPCT" ] && CPUPCT=0
+
+  # --- память ---
+  MEMT=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+  MEMA=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+  MEMU=$((MEMT - MEMA))
+  [ -n "$MEMT" ] && [ "$MEMT" -gt 0 ] && MEMPCT=$(( 100 * MEMU / MEMT )) || MEMPCT=0
+
+  # --- разделы (NAND/UBI: rootfs, /bkupgrade = /data, /tee) ---
+  ROOT=$(df -k / 2>/dev/null | awk 'NR==2 {printf "%d/%dMB %d%%", int($3/1024), int($2/1024), $5+0}')
+  DATA=$(df -k /bkupgrade 2>/dev/null | awk 'NR==2 {printf "%d/%dMB %d%%", int($3/1024), int($2/1024), $5+0}')
+  TEE=$(df -k /tee 2>/dev/null | awk 'NR==2 {printf "%d/%dKB %d%%", $3, $2, $5+0}')
+
+  # --- железо ---
+  MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0')
+  CORES=$(grep -c ^processor /proc/cpuinfo)
+  KERN=$(uname -r)
+
+  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"pcm\":\"$(pcm_owner)\",\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\",\"load1\":\"$L1\",\"load5\":\"$L5\",\"load15\":\"$L15\",\"procs\":\"$PROCS\",\"cpu\":$CPUPCT,\"mem_total\":${MEMT:-0},\"mem_used\":${MEMU:-0},\"mem_pct\":$MEMPCT,\"root\":\"${ROOT:-—}\",\"data\":\"${DATA:-—}\",\"tee\":\"${TEE:-—}\",\"model\":\"${MODEL:-—}\",\"cores\":${CORES:-0},\"kernel\":\"${KERN:-—}\"}"
 }
 
 do_action() {
@@ -155,11 +198,24 @@ pre{white-space:pre-wrap;margin:10px 0 0}
 
 
 <div class="card">
-  <div class="row"><span>Сеть</span><b id="v-net" class="dim">…</b></div>
-  <div class="row"><span>Прошивка</span><b id="v-fw" class="dim">…</b></div>
-  <div class="row"><span>Свободно /data</span><b id="v-free" class="dim">…</b></div>
+  <div class="dim" style="margin-bottom:6px">Нагрузка</div>
+  <div class="row"><span>Процессор</span><b id="v-cpu" class="dim">…</b></div>
+  <div class="row"><span>Load average (1 / 5 / 15)</span><b id="v-load" class="dim">…</b></div>
+  <div class="row"><span>Процессов</span><b id="v-procs" class="dim">…</b></div>
+  <div class="row"><span>Память</span><b id="v-ram" class="dim">…</b></div>
   <div class="row"><span>Температура</span><b id="v-temp" class="dim">…</b></div>
   <div class="row"><span>Аптайм</span><b id="v-uptime" class="dim">…</b></div>
+</div>
+
+<div class="card">
+  <div class="dim" style="margin-bottom:6px">Железо и диски</div>
+  <div class="row"><span>Модель</span><b id="v-model" class="dim">…</b></div>
+  <div class="row"><span>Ядра / ядро</span><b id="v-hw" class="dim">…</b></div>
+  <div class="row"><span>rootfs (/)</span><b id="v-root" class="dim">…</b></div>
+  <div class="row"><span>/data (bkupgrade)</span><b id="v-data" class="dim">…</b></div>
+  <div class="row"><span>/tee</span><b id="v-tee" class="dim">…</b></div>
+  <div class="row"><span>Сеть</span><b id="v-net" class="dim">…</b></div>
+  <div class="row"><span>Прошивка</span><b id="v-fw" class="dim">…</b></div>
 </div>
 
 <div class="card">
@@ -211,7 +267,23 @@ function paint(s){
   var p=document.getElementById('v-pcm');p.textContent=s.pcm||'—';p.className='dim';
   document.getElementById('v-net').textContent=(s.ip||'—')+' · '+(s.ssid||'—')+' · '+(s.band||'—');
   document.getElementById('v-fw').textContent=s.fw||'—';
-  document.getElementById('v-free').textContent=s.free||'—';
+  document.getElementById('v-model').textContent=s.model||'—';
+  document.getElementById('v-hw').textContent=(s.cores||0)+' шт · ядро '+(s.kernel||'—');
+
+  var cpu=document.getElementById('v-cpu');
+  cpu.textContent=(s.cpu||0)+'%';
+  cpu.className=(s.cpu>85)?'bad':((s.cpu>50)?'dim':'ok');
+
+  document.getElementById('v-load').textContent=[s.load1,s.load5,s.load15].join(' / ');
+  document.getElementById('v-procs').textContent=s.procs||'—';
+
+  var ram=document.getElementById('v-ram');
+  ram.textContent=(s.mem_used||0)+' / '+(s.mem_total||0)+' МБ ('+(s.mem_pct||0)+'%)';
+  ram.className=(s.mem_pct>90)?'bad':((s.mem_pct>70)?'dim':'ok');
+
+  document.getElementById('v-root').textContent=s.root||'—';
+  document.getElementById('v-data').textContent=s.data||'—';
+  document.getElementById('v-tee').textContent=s.tee||'—';
   document.getElementById('v-temp').textContent=(s.temp?s.temp+' °C':'—');
   document.getElementById('v-uptime').textContent=(s.uptime||0)+' мин';
   document.title=(s.playing?'▶ ':'')+'Станция Midi';
