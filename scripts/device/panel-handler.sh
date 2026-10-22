@@ -42,10 +42,10 @@ pcm_owner() {
   echo "Свободно"
 }
 
-# Громкость: усилитель SY6045S (numid=1 — мастер, 2 и 3 — каналы).
-# Штатные значения на этой колонке: мастер 214, каналы 159 — это и есть «нормальная»
-# громкость. Ползунок задаёт долю от них: 100% = как было с завода, 0% = тишина.
-# Регуляторы крутим пропорционально, чтобы соотношение не ломалось.
+# Громкость: проверено на слух — громкостью управляют КАНАЛЫ усилителя (numid=2,3),
+# а «мастер» (numid=1) стоит на заводском 214 и почти не влияет. Поэтому ползунок
+# двигает только каналы: 100% = заводские 159 (обычная громкость колонки), 0% = тишина.
+# Ниже ~25% звука практически нет — это особенность железа, а не ползунка.
 AMP_MASTER=1
 AMP_CH1=2
 AMP_CH2=3
@@ -56,21 +56,20 @@ raw_get() { "$L" "$T/bin/amixer" cget numid=$1 2>/dev/null | sed -n 's/^ *: valu
 raw_set() { "$L" "$T/bin/amixer" -q cset numid=$1 "$2" >/dev/null 2>&1; }
 
 volume() {
-  v=$(raw_get $AMP_MASTER)
+  v=$(raw_get $AMP_CH1)
   if [ -z "$v" ]; then
     "$L" "$T/bin/amixer" sget Master 2>/dev/null | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1
     return
   fi
-  p=$(( (v * 100 + STOCK_MASTER / 2) / STOCK_MASTER ))
+  p=$(( (v * 100 + STOCK_CH / 2) / STOCK_CH ))
   [ "$p" -lt 0 ] && p=0
   [ "$p" -gt 100 ] && p=100
   echo "$p"
 }
 
 set_volume() {
-  m=$(( ($1 * STOCK_MASTER + 50) / 100 ))
   c=$(( ($1 * STOCK_CH + 50) / 100 ))
-  raw_set $AMP_MASTER "$m"
+  raw_set $AMP_MASTER $STOCK_MASTER
   raw_set $AMP_CH1 "$c"
   raw_set $AMP_CH2 "$c"
 }
