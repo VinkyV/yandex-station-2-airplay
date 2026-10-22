@@ -24,6 +24,10 @@ case "$1" in
     # AirPlay: поднимаем после того, как появятся /data и звуковая карта
     [ -x /data/local/bin/boot-airplay.sh ] && \
       start-stop-daemon -S -b -m -p /run/boot-airplay.pid -x /bin/sh -- /data/local/bin/boot-airplay.sh
+
+    # веб-панель (только домашняя сеть)
+    [ -x /data/local/bin/panel-server.sh ] && \
+      start-stop-daemon -S -b -m -p /run/panel.pid -x /bin/sh -- /data/local/bin/panel-server.sh
     ;;
   stop)
     pkill -f watch-launchd.sh 2>/dev/null
