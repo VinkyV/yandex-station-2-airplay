@@ -1,0 +1,236 @@
+# 03. AirPlay на колонке
+
+Самая интересная часть: у Midi нет AirPlay, а после root его можно добавить — колонка появится
+на iPhone и Mac в списке AirPlay и будет играть в свои динамики.
+
+Схема: `shairport-sync` (AirPlay 1) + `avahi` для объявления в сети + маленький распорядитель,
+который передаёт звуковое устройство между приёмником и штатным медиа-демоном.
+
+```
+                     ┌──────────────────────────────┐
+  iPhone/Mac ───────▶│ shairport-sync :5000         │──┐
+                     └──────────────────────────────┘  │   pcmC0D0p (ALSA)
+                     ┌──────────────────────────────┐  ├──▶ динамики
+  Алиса ────────────▶│ maind --mediad               │──┘
+                     └──────────────────────────────┘
+                        ↑ кто из них владеет устройством,
+                          решает audio-owner.sh
+```
+
+## Что нужно
+
+- root и SSH на колонке (см. `01-root.md`, `02-persistence.md`);
+- набор musl-бинарников: `shairport-sync`, `avahi`, `dbus-daemon`, `dropbear`, `alsa-utils`
+  (как собрать — `05-tools.md`);
+- ничего компилировать на колонке не надо.
+
+## Шаг 1. Своя шина D-Bus
+
+Системная шина на Midi — для служб Яндекса, и avahi в неё не пустят
+(`not allowed to own the service "org.freedesktop.Avahi" due to security policies`).
+Поднимаем отдельную шину:
+
+`/data/local/etc/airplay-bus.conf`:
+
+```xml
+<busconfig>
+  <type>system</type>
+  <listen>unix:path=/run/dbus/airplay_bus</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow user="*"/>
+    <allow own="*"/>
+    <allow send_type="method_call"/>
+    <allow send_type="signal"/>
+    <allow send_requested_reply="true" send_type="method_return"/>
+    <allow send_requested_reply="true" send_type="error"/>
+    <allow receive_type="method_call"/>
+    <allow receive_type="signal"/>
+    <allow receive_type="method_return"/>
+    <allow receive_type="error"/>
+  </policy>
+</busconfig>
+```
+
+```sh
+L=/data/local/opt/tools/lib/ld-musl-aarch64.so.1
+T=/data/local/opt/airplay
+mkdir -p /run/dbus
+"$L" "$T/bin/dbus-daemon" --config-file=/data/local/etc/airplay-bus.conf \
+     --fork --print-address=1 > /run/dbus/airplay.addr
+```
+
+Адрес шины **обязательно** в `/run` (или другом месте, которое точно пишется при загрузке) и
+читается оттуда всеми, кто стартует позже.
+
+## Шаг 2. avahi с именем колонки
+
+Главный подводный камень. У колонки уже работает mDNS: демон `maind` держит UDP 5353 и публикует
+имя вида `yandex-station-gen2-<ID>.local`. Если avahi поднимется со своим именем, он получит
+конфликт PTR/адресов, отзовёт записи и уйдёт переименовываться по кругу — телефон ничего не
+увидит, хотя порт 5000 слушает.
+
+**Решение:** дать avahi то же имя хоста, что у колонки.
+
+`/data/local/opt/airplay/etc/avahi/avahi-daemon.conf`:
+
+```ini
+[server]
+host-name=yandex-station-gen2-<ID>    # ровно как публикует maind
+use-ipv4=yes
+use-ipv6=no
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[publish]
+publish-hinfo=no
+publish-workstation=no
+```
+
+Имя хоста колонки можно узнать так: `avahi-browse -at` или `dns-sd -B _raop._tcp` не покажет,
+а вот mDNS-имя видно в приложении/сканере сети, либо в `ps w | grep maind` (аргументы),
+либо `cat /etc/hostname`.
+
+Пользователь `avahi` в системе отсутствует — добавляем (иначе avahi не стартует):
+
+```sh
+grep -q '^avahi:' /etc/passwd || echo 'avahi:x:86:86::/:/bin/false' >> /etc/passwd
+grep -q '^avahi:' /etc/group  || echo 'avahi:x:86:' >> /etc/group
+mkdir -p /run/avahi-daemon
+```
+
+Запуск — без сброса привилегий и без chroot (иначе падает на этой сборке):
+
+```sh
+DBUS_SYSTEM_BUS_ADDRESS="$(cat /run/dbus/airplay.addr)" \
+LD_LIBRARY_PATH="$T/lib:/data/local/opt/tools/lib" \
+  "$L" "$T/bin/avahi-daemon" --no-drop-root --no-chroot \
+       -f "$T/etc/avahi/avahi-daemon.conf"
+```
+
+## Шаг 3. Звук
+
+Штатный ALSA-конфиг (`/usr/share/alsa/alsa.conf`) тянет 32-битные плагины — musl-бинарник на нём
+падает (`Exec format error`). Поэтому у приёмника свой конфиг:
+
+`/data/local/etc/asound.conf`:
+
+```
+pcm.!default { type hw; card 0; device 0 }
+ctl.!default { type hw; card 0 }
+```
+
+Устройство отдаём напрямую. Микшер (`dmix`) на этой сборке недоступен, поэтому «играть
+одновременно с Алисой» не получится — нужен арбитраж (шаг 5).
+
+## Шаг 4. Приёмник
+
+`/data/local/opt/airplay/etc/shairport-sync.conf`:
+
+```
+general = {
+    name = "Яндекс Станция";        // как будет в списке AirPlay
+    service_type = "classic";      // AirPlay 1
+    port = 5000;
+    output_backend = "alsa";
+    mdns_backend = "avahi";
+    volume_range_db = 60;
+    allow_session_interruption = "yes";
+    session_timeout = 8;           // сколько держать сессию после тишины
+};
+
+alsa = {
+    output_device = "default";
+    audio_backend_buffer_desired_length_in_seconds = 0.5;
+    disable_standby_mode = "auto"; // отпускать устройство в простое
+};
+```
+
+Запуск:
+
+```sh
+LD_LIBRARY_PATH="$T/lib:/data/local/opt/tools/lib" \
+ALSA_CONFIG_PATH=/data/local/etc/asound.conf \
+DBUS_SYSTEM_BUS_ADDRESS="$(cat /run/dbus/airplay.addr)" \
+  "$L" "$T/bin/shairport-sync" -c "$T/etc/shairport-sync.conf"
+```
+
+Проверка: `netstat -ln | grep 5000` и с телефона — устройство должно появиться в AirPlay.
+
+## Шаг 5. Распорядитель звука
+
+Проблема: `maind --mediad` открывает `pcmC0D0p` и держит его. Пока он жив, `shairport-sync`
+получает `EBUSY` и молчит — AirPlay «подключается», но тишина.
+
+Решение — `audio-owner.sh`: раз в 4 секунды смотрит, есть ли **установленное** соединение на
+порт 5000.
+
+* есть → останавливает `maind --mediad` (звук уходит приёмнику);
+* нет → поднимает `maind --mediad` обратно.
+
+```sh
+playing() { netstat -tn 2>/dev/null | grep -q ':5000 .*ESTABLISHED'; }
+
+start_mediad() {
+  ps w | grep -q '[m]aind --mediad' && return
+  cd /data/quasar || cd /
+  MALLOC_ARENA_MAX=2 CA_CERTIFICATES=/system/vendor/quasar/ca-certificates.crt \
+    nohup /system/vendor/quasar/maind --mediad >> /data/quasar/mediad.log 2>&1 </dev/null &
+}
+```
+
+Две тонкости, без которых схема разваливается:
+
+1. **Приёмник держит ALSA не только во время игры.** После сессии он продолжает занимать
+   устройство — Алиса остаётся немой. Лечится перезапуском приёмника после сессии: он отпускает
+   ALSA, но остаётся объявленным в сети.
+2. **Лаунчер не поднимает `mediad` сразу** после падения (ждёт до 600 с), поэтому демон
+   поднимает распорядитель сам, со своим окружением (`MALLOC_ARENA_MAX`, `CA_CERTIFICATES`).
+
+Полный скрипт: [`scripts/device/audio-owner.sh`](../scripts/device/audio-owner.sh).
+
+## Шаг 6. Автозапуск
+
+При загрузке `S97station-root` стартует слишком рано: `/data` ещё не смонтирован, `/dev/snd` ещё
+нет. Поэтому автозапуск AirPlay вынесен в `boot-airplay.sh`: он ждёт появления
+`/data/local/opt/airplay/bin/shairport-sync` и `/dev/snd/pcmC0D0p`, потом поднимает шину, avahi,
+приёмник и распорядителя.
+
+```
+/etc/init.d/S97station-root  →  boot-airplay.sh  →  dbus + avahi-keeper + shairport + audio-owner
+```
+
+Файлы: [`scripts/device/boot-airplay.sh`](../scripts/device/boot-airplay.sh),
+[`scripts/device/avahi-keeper.sh`](../scripts/device/avahi-keeper.sh),
+[`scripts/device/S97station-root.sh`](../scripts/device/S97station-root.sh).
+
+## Проверка, что всё живо
+
+```sh
+ps w | grep -c '[a]vahi-daemon'       # 1
+ps w | grep -c '[s]hairport-sync -c'  # 1
+netstat -ln | grep -c ':5000'         # 1
+netstat -tn | grep queue              # ждём ESTABLISHED при игре
+```
+
+С компьютера: `dns-sd -B _raop._tcp local` — в списке должна быть «Яндекс Станция».
+
+## Грабли, на которые мы наступили
+
+| Симптом | Причина | Лечение |
+|---|---|---|
+| Порт 5000 слушает, телефон не видит | shairport перезапущен с пустым адресом шины и ушёл на системную шину | адрес всегда из `/run/dbus/airplay.addr`; после перезагрузки `/run` пуст |
+| Устройство то появляется, то нет | avahi с чужим именем хоста конфликтует с mDNS колонки | имя = имени колонки |
+| AirPlay «подключён», звука нет | `maind --mediad` держит `pcmC0D0p` | распорядитель убивает демон при подключении |
+| После AirPlay Алиса молчит | приёмник не отпустил ALSA | перезапуск приёмника после сессии |
+| Алиса молчит сразу после старта | `mediad` не поднят после падения | поднимать самому, с окружением |
+| `aplay`/avahi падают с `Exec format error` | тянется 32-битный системный ALSA-конфиг | свой `ALSA_CONFIG_PATH` + `LD_LIBRARY_PATH` |
+| avahi: `not allowed to own the service` | системная шина Яндекса | своя шина dbus |
+| нет устройства `avahi` в `/etc/passwd` | avahi не может сбросить привилегии | добавить пользователя/группу |
+| порт занят, приёмник не стартует | старый экземпляр `shairport-sync` | `kill -9` перед запуском |
+
+## Почему только AirPlay 1
+
+Для AirPlay 2 нужен `nqptp` (точная синхронизация времени) — в Alpine его нет. Поэтому нет
+мультирума и сопряжения через «Дом». AirPlay 1 покрывает главное: играть звук с iPhone/Mac на
+колонку.

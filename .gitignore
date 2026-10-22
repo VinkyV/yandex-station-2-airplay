@@ -1,0 +1,7 @@
+.DS_Store
+*.log
+private/
+*.tar.gz
+*.apk
+__pycache__/
+.venv/
