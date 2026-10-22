@@ -32,8 +32,11 @@ case "$1" in
   stop)
     pkill -f watch-launchd.sh 2>/dev/null
     pkill -f audio-owner.sh 2>/dev/null
-    pkill -f airplay-daemon.sh 2>/dev/null
+    pkill -f airplay2-daemon.sh 2>/dev/null
     pkill -f avahi-keeper.sh 2>/dev/null
+    pkill -f panel-server.sh 2>/dev/null
+    pkill -f '[n]qptp' 2>/dev/null
+    pkill -f 'shairport-sync' 2>/dev/null
     pkill -f "dropbear -r" 2>/dev/null
     ;;
 esac

@@ -5,9 +5,6 @@
 #   /action?do=…&t=TOKEN   — действия (нужен токен)
 #   /log?name=…            — хвост лога
 
-TOKENF=/data/local/etc/panel.token
-TOKEN=$(cat "$TOKENF" 2>/dev/null)
-
 T=/data/local/opt/airplay
 L=/data/local/opt/tools/lib/ld-musl-aarch64.so.1
 export LD_LIBRARY_PATH="$T/lib:/data/local/opt/tools/lib"
@@ -42,19 +39,56 @@ pcm_owner() {
       case "$t" in *pcmC0D0p*) cat /proc/$p/comm 2>/dev/null; return;; esac
     done
   done
-  echo "свободно"
+  echo "Свободно"
 }
 
-volume() { "$L" "$T/bin/amixer" sget Master 2>/dev/null | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1; }
-set_volume() { "$L" "$T/bin/amixer" -q sset Master "$1%" >/dev/null 2>&1; }
+# Громкость: усилитель SY6045S (numid=1 — мастер, 2 и 3 — каналы).
+# Штатные значения на этой колонке: мастер 214, каналы 159 — это и есть «нормальная»
+# громкость. Ползунок задаёт долю от них: 100% = как было с завода, 0% = тишина.
+# Регуляторы крутим пропорционально, чтобы соотношение не ломалось.
+AMP_MASTER=1
+AMP_CH1=2
+AMP_CH2=3
+STOCK_MASTER=214
+STOCK_CH=159
+
+raw_get() { "$L" "$T/bin/amixer" cget numid=$1 2>/dev/null | sed -n 's/^ *: values=\([0-9]*\).*/\1/p' | head -1; }
+raw_set() { "$L" "$T/bin/amixer" -q cset numid=$1 "$2" >/dev/null 2>&1; }
+
+volume() {
+  v=$(raw_get $AMP_MASTER)
+  if [ -z "$v" ]; then
+    "$L" "$T/bin/amixer" sget Master 2>/dev/null | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1
+    return
+  fi
+  p=$(( (v * 100 + STOCK_MASTER / 2) / STOCK_MASTER ))
+  [ "$p" -lt 0 ] && p=0
+  [ "$p" -gt 100 ] && p=100
+  echo "$p"
+}
+
+set_volume() {
+  m=$(( ($1 * STOCK_MASTER + 50) / 100 ))
+  c=$(( ($1 * STOCK_CH + 50) / 100 ))
+  raw_set $AMP_MASTER "$m"
+  raw_set $AMP_CH1 "$c"
+  raw_set $AMP_CH2 "$c"
+}
 
 status_json() {
-  SH=$(pcount '[s]hairport-sync -c')
+  SP=$(ps w | awk '/[s]hairport-sync/ {print $1}' | head -1)
+  SH=0; [ -n "$SP" ] && SH=1
   AV=$(pcount '[a]vahi-daemon')
+  NQ=$(pcount '[n]qptp')
   MD=$(pcount '[m]aind --mediad')
   UP=$(pcount '[u]pdatesd')
-  P5=$(netstat -ln 2>/dev/null | grep -c ':5000')
-  EST=$(netstat -tn 2>/dev/null | grep -c ':5000 .*ESTABLISHED')
+  EST=0; LPORT="—"
+  if [ -n "$SP" ]; then
+    LS=$(LD_LIBRARY_PATH="$T/lib:/data/local/opt/tools/lib" "$L" /data/local/opt/tools/bin/lsof -nP -a -p "$SP" -i TCP 2>/dev/null)
+    EST=$(printf '%s\n' "$LS" | grep -c ESTABLISHED)
+    LPORT=$(printf '%s\n' "$LS" | awk '/LISTEN/ {print $9}' | sed 's/.*://' | head -1)
+    [ -z "$LPORT" ] && LPORT="—"
+  fi
   V=$(volume); [ -z "$V" ] && V=0
   UPT=$(cut -d. -f1 /proc/uptime)
   FREE=$(df -h /data 2>/dev/null | awk 'NR==2 {print $4}')
@@ -69,14 +103,11 @@ status_json() {
     if [ "$FRQ" -ge 4000 ] 2>/dev/null; then BAND="5 ГГц"; else BAND="2.4 ГГц"; fi
   fi
   FW=$(cat /system/vendor/quasar/version_full 2>/dev/null)
-  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"port5000\":$P5,\"playing\":$EST,\"volume\":${V:-0},\"pcm\":\"$(pcm_owner)\",\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\"}"
+  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"volume\":${V:-0},\"pcm\":\"$(pcm_owner)\",\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\"}"
 }
 
 do_action() {
-  A=$(qval do); AT=$(qval t)
-  if [ -z "$TOKEN" ] || [ "$AT" != "$TOKEN" ]; then
-    send "text/plain; charset=utf-8" "неверный или отсутствующий токен"; return
-  fi
+  A=$(qval do)
   case "$A" in
     airplay-restart)
       for p in $(ps w | awk '/[s]hairport-sync/ {print $1}'); do kill "$p" 2>/dev/null; done
@@ -100,7 +131,7 @@ do_action() {
       case "$V" in ''|*[!0-9]*) send "text/plain; charset=utf-8" "плохое значение"; return;; esac
       [ "$V" -gt 100 ] && V=100
       set_volume "$V"
-      send "text/plain; charset=utf-8" "громкость $V%" ;;
+      send "text/plain; charset=utf-8" "Громкость $V%" ;;
     reboot)
       send "text/plain; charset=utf-8" "перезагрузка через 2 секунды"
       (sleep 2; sync; reboot) >/dev/null 2>&1 &
@@ -149,79 +180,81 @@ input[type=range]{width:100%;accent-color:#79a8ff}
 pre{white-space:pre-wrap;margin:10px 0 0}
 </style></head><body>
 <h1>Яндекс Станция Midi</h1>
-<div class="sub">root · AirPlay · обновления выключены</div>
+<div class="sub">Root · AirPlay · Обновления выключены</div>
 
 <div class="card">
-  <div class="hdr"><span class="dim">сейчас звучит</span><b id="now">…</b></div>
-  <div class="row"><span>приёмник AirPlay</span><b id="v-shairport" class="dim">…</b></div>
-  <div class="row"><span>avahi (объявление в сети)</span><b id="v-avahi" class="dim">…</b></div>
-  <div class="row"><span>демон Алисы</span><b id="v-mediad" class="dim">…</b></div>
-  <div class="row"><span>порт 5000</span><b id="v-port" class="dim">…</b></div>
-  <div class="row"><span>обновлятор updatesd</span><b id="v-upd" class="dim">…</b></div>
-  <div class="row"><span>звук занят</span><b id="v-pcm" class="dim">…</b></div>
+  <div class="hdr"><span class="dim">Сейчас звучит</span><b id="now">…</b></div>
+  <div class="row"><span>Приёмник AirPlay</span><b id="v-shairport" class="dim">…</b></div>
+  <div class="row"><span>Avahi (объявление в сети)</span><b id="v-avahi" class="dim">…</b></div>
+  <div class="row"><span>Демон Алисы</span><b id="v-mediad" class="dim">…</b></div>
+  <div class="row"><span>Слушает порт</span><b id="v-port" class="dim">…</b></div>
+  <div class="row"><span>Nqptp (AirPlay 2)</span><b id="v-nqptp" class="dim">…</b></div>
+  <div class="row"><span>Обновлятор updatesd</span><b id="v-upd" class="dim">…</b></div>
+  <div class="row"><span>Звук занят</span><b id="v-pcm" class="dim">…</b></div>
 </div>
 
 <div class="card">
-  <div class="hdr"><span class="dim">громкость</span><b id="v-vol">…</b></div>
+  <div class="hdr"><span class="dim">Громкость</span><b id="v-vol">…</b></div>
   <input id="vol" type="range" min="0" max="100" step="1" value="50">
-  <div class="small">отпусти ползунок — применится</div>
+  <div class="small">Отпусти ползунок — применится</div>
 </div>
 
 <div class="card">
-  <div class="row"><span>сеть</span><b id="v-net" class="dim">…</b></div>
-  <div class="row"><span>прошивка</span><b id="v-fw" class="dim">…</b></div>
-  <div class="row"><span>свободно /data</span><b id="v-free" class="dim">…</b></div>
-  <div class="row"><span>температура</span><b id="v-temp" class="dim">…</b></div>
-  <div class="row"><span>аптайм</span><b id="v-uptime" class="dim">…</b></div>
+  <div class="row"><span>Сеть</span><b id="v-net" class="dim">…</b></div>
+  <div class="row"><span>Прошивка</span><b id="v-fw" class="dim">…</b></div>
+  <div class="row"><span>Свободно /data</span><b id="v-free" class="dim">…</b></div>
+  <div class="row"><span>Температура</span><b id="v-temp" class="dim">…</b></div>
+  <div class="row"><span>Аптайм</span><b id="v-uptime" class="dim">…</b></div>
 </div>
 
 <div class="card">
-  <input id="tk" type="text" placeholder="токен доступа" autocomplete="off">
-  <div class="grid" style="margin-top:10px">
+  <div class="grid">
     <button data-a="airplay-restart">Перезапустить AirPlay</button>
     <button data-a="airplay-off">Выключить AirPlay</button>
     <button data-a="avahi-restart">Перезапустить avahi</button>
     <button data-a="mediad-restart">Поднять Алису</button>
     <button data-a="reboot" class="warn">Перезагрузить</button>
   </div>
-  <div class="small">Только домашняя сеть. Токен: /data/local/etc/panel.token</div>
+  <div class="small">Только домашняя сеть</div>
 </div>
 
 <div class="card">
   <div class="dim">Логи</div>
   <div class="grid" style="margin-top:8px">
-    <button data-log="airplay">приёмник</button>
-    <button data-log="owner">распорядитель</button>
-    <button data-log="avahi">avahi</button>
-    <button data-log="boot">загрузка</button>
-    <button data-log="updates">обновления</button>
-    <button data-log="panel">панель</button>
+    <button data-log="airplay">Приёмник</button>
+    <button data-log="owner">Распорядитель</button>
+    <button data-log="avahi">Avahi</button>
+    <button data-log="boot">Загрузка</button>
+    <button data-log="updates">Обновления</button>
+    <button data-log="panel">Панель</button>
   </div>
   <pre id="out" class="small"></pre>
 </div>
 
 <script>
-var tk=document.getElementById('tk'),out=document.getElementById('out'),
+var out=document.getElementById('out'),
     vol=document.getElementById('vol'),volLabel=document.getElementById('v-vol'),
     volBusy=false;
 
-tk.value=localStorage.getItem('panel-token')||'';
-tk.oninput=function(){localStorage.setItem('panel-token',tk.value)};
 function show(t){out.textContent=t}
 function cls(el,good){el.className=good?'ok':'bad'}
 
 function paint(s){
   document.getElementById('now').textContent=s.playing?'AirPlay играет':'Алиса';
-  var m={shairport:'v-shairport',avahi:'v-avahi',mediad:'v-mediad',port5000:'v-port'};
+  var m={shairport:'v-shairport',avahi:'v-avahi',mediad:'v-mediad'};
   for(var k in m){
     var el=document.getElementById(m[k]);
-    el.textContent=s[k]>0?'работает':'нет';
+    el.textContent=s[k]>0?'Работает':'Нет';
     cls(el,s[k]>0);
   }
+  var nq=document.getElementById('v-nqptp');
+  nq.textContent=s.nqptp>0?'Работает':'Нет';cls(nq,s.nqptp>0);
+  var pp=document.getElementById('v-port');
+  pp.textContent=s.listen||'—';pp.className='dim';
   var md=document.getElementById('v-mediad');
-  if(s.playing&&s.mediad===0){md.textContent='уступлен AirPlay';md.className='dim'}
+  if(s.playing&&s.mediad===0){md.textContent='Уступлен AirPlay';md.className='dim'}
   var u=document.getElementById('v-upd');
-  u.textContent=s.updatesd>0?'включён':'выключен';cls(u,s.updatesd===0);
+  u.textContent=s.updatesd>0?'Включён':'Выключен';cls(u,s.updatesd===0);
   var p=document.getElementById('v-pcm');p.textContent=s.pcm||'—';p.className='dim';
   if(!volBusy){vol.value=s.volume;volLabel.textContent=s.volume+'%'}
   document.getElementById('v-net').textContent=(s.ip||'—')+' · '+(s.ssid||'—')+' · '+(s.band||'—');
@@ -239,9 +272,9 @@ refresh();setInterval(refresh,5000);
 
 vol.oninput=function(){volBusy=true;volLabel.textContent=vol.value+'%'};
 vol.onchange=function(){
-  fetch('/action?do=volume&v='+vol.value+'&t='+encodeURIComponent(tk.value))
+  fetch('/action?do=volume&v='+vol.value)
     .then(function(r){return r.text()}).then(function(t){
-      if(t.indexOf('громкость')<0)show(t);
+      if(t.indexOf('Громкость')<0)show(t);
       setTimeout(function(){volBusy=false},800);
     }).catch(function(e){show('ошибка: '+e);volBusy=false});
 };
@@ -249,7 +282,7 @@ vol.onchange=function(){
 document.querySelectorAll('[data-a]').forEach(function(b){b.onclick=function(){
   if(b.dataset.a==='reboot'&&!confirm('Перезагрузить колонку?'))return;
   show('…');
-  fetch('/action?do='+b.dataset.a+'&t='+encodeURIComponent(tk.value))
+  fetch('/action?do='+b.dataset.a)
     .then(function(r){return r.text()}).then(function(t){show(t);refresh()})
     .catch(function(e){show('ошибка: '+e)});
 }});
