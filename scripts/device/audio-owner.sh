@@ -21,7 +21,17 @@ playing() {
 }
 
 start_mediad() {
-  if ! ps w | grep -q '[m]aind --mediad'; then
+  # Если экземпляров больше одного (лаунчер успевает поднять свой), они дерутся за звук
+  # и Алиса молчит. Оставляем ровно один.
+  PIDS=$(ps w | awk '/[m]aind --mediad/ {print $1}')
+  N=$(printf '%s\n' "$PIDS" | grep -c .)
+  if [ "$N" -gt 1 ]; then
+    for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
+    sleep 2
+    echo "$(date): убрал дубли mediad (было $N)" >> "$LOG"
+    N=0
+  fi
+  if [ "$N" -eq 0 ]; then
     cd /data/quasar 2>/dev/null || cd /
     MALLOC_ARENA_MAX=2 CA_CERTIFICATES=/system/vendor/quasar/ca-certificates.crt \
       nohup /system/vendor/quasar/maind --mediad >> /data/quasar/mediad.log 2>&1 < /dev/null &
