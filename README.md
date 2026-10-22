@@ -84,6 +84,8 @@ docs/
   07-airplay2-build.md — сборка AirPlay 2: статический ffmpeg, shairport-sync, nqptp
 scripts/
   device/             — скрипты, которые живут на колонке
+  build/airplay2/     — сборка AirPlay 2 (nqptp, shairport-sync, мини-ffmpeg) в контейнере
+  build/              — сборка musl-набора утилит из пакетов Alpine
   mac/                — то, что запускается с компьютера
 ```
 
