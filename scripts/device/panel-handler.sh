@@ -162,7 +162,7 @@ page() {
   cat <<'EOF'
 <!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Станция Midi</title><style>
+<title>Станция 2</title><style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;padding:24px;background:#111318;color:#e8eaed;font:16px/1.45 -apple-system,system-ui,sans-serif}
@@ -185,7 +185,7 @@ input[type=range]{width:100%;accent-color:#79a8ff}
 .cols>.card{margin-bottom:14px}
 pre{white-space:pre-wrap;margin:10px 0 0}
 </style></head><body>
-<h1>Яндекс Станция Midi</h1>
+<h1>Яндекс Станция 2</h1>
 <div class="sub">Root · AirPlay · Обновления выключены</div>
 
 <div class="cols">
@@ -293,7 +293,7 @@ function paint(s){
   document.getElementById('v-tee').textContent=s.tee||'—';
   document.getElementById('v-temp').textContent=(s.temp?s.temp+' °C':'—');
   document.getElementById('v-uptime').textContent=(s.uptime||0)+' мин';
-  document.title=(s.playing?'▶ ':'')+'Станция Midi';
+  document.title=(s.playing?'▶ ':'')+'Станция 2';
 }
 
 function refresh(){
