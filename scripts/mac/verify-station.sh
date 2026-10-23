@@ -14,7 +14,7 @@
 set -u
 
 # Адрес колонки — обязательный параметр: в публичной версии никаких сетей по умолчанию.
-#   STATION=<IP> KEY=~/.ssh/station sh verify.sh
+#   STATION=192.168.1.50 sh verify.sh
 HOST=${STATION:?укажите адрес колонки: STATION=<ip> sh verify.sh}
 PORT=${PORT:-2222}
 KEY=${KEY:-$HOME/.ssh/station}
@@ -49,7 +49,14 @@ for p in /proc/[0-9]*; do
         */airplay2/bin/shairport-sync*)  shair=$((shair+1)) ;;
         *avahi-daemon:*)                 avahi=$((avahi+1)) ;;
         */system/vendor/quasar/maind\ --mediad*) mediad=$((mediad+1)) ;;
-        */data/local/bin/alice-voice.sh*) voice=$((voice+1)) ;;
+        */data/local/bin/alice-voice.sh*)
+            # копией считается только корень ветки: у одной копии бывает 2–3 вложенных sh
+            ppid=$(awk '{print $4}' "$p/stat" 2>/dev/null)
+            pc=$(tr '\0' ' ' < "/proc/$ppid/cmdline" 2>/dev/null)
+            case "$pc" in
+                */data/local/bin/alice-voice.sh*) : ;;
+                *) voice=$((voice+1)) ;;
+            esac ;;
     esac
 done
 
@@ -90,11 +97,11 @@ case "$(get mediad)" in
     *) fail "mediad: $(get mediad) копий (дерутся за звук)" ;;
 esac
 [ "$(get led)" -ge 1 ] 2>/dev/null && pass "кадры подсветки: $(get led)" || fail "нет кадров в /data/local/led"
-# у слушателя всегда есть подshell с той же командной строкой: 2 совпадения = одна копия
+# считаются только корни веток: у живой копии 2–3 вложенных sh с той же командной строкой
 case "$(get voice)" in
-    2) pass "слушатель голоса: одна копия" ;;
+    1) pass "слушатель голоса: одна копия" ;;
     0) fail "слушатель голоса не запущен" ;;
-    *) fail "слушатель голоса: $(get voice) совпадений — похоже на копии (двойные срабатывания)" ;;
+    *) fail "слушатель голоса: $(get voice) независимых копий (двойные срабатывания фраз)" ;;
 esac
 [ "$(get updatesd)" = "0" ] && pass "обновления заморожены (updatesd нет в launch.json)" || fail "updatesd в launch.json — обновления могут приехать"
 [ "$(get ota_wrapper)" = "yes" ] && pass "применитель OTA — заглушка с обходом" || fail "device_ota_update.sh не заглушка (второй слой заморозки)"
