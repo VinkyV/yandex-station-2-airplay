@@ -118,8 +118,10 @@ docs/
   07-airplay2-build.md — сборка AirPlay 2: статический ffmpeg, shairport-sync, nqptp
   08-leds.md         — подсветка кольца: framebuffer, паттерны, привязка к AirPlay
   09-voice.md        — голос: текст распознавания из локального IPC Алисы (127.0.0.1:9875)
+  10-verify.md       — проверка «всё ли живо» одной командой (15 пунктов, ничего не меняет)
 scripts/
   device/             — скрипты, которые живут на колонке
+  mac/verify-station.sh — проверка состояния колонки по SSH: 15 пунктов, только чтение
   build/airplay2/     — сборка AirPlay 2 (nqptp, shairport-sync, мини-ffmpeg) в контейнере
   build/led-patterns.py — генератор кадров подсветки
   build/              — сборка musl-набора утилит из пакетов Alpine
