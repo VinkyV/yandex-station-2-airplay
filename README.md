@@ -151,7 +151,7 @@ http://<STATION_IP>:8081
 
 ## Связанные проекты
 
-- **[zvuk-station-player](https://github.com/derangedabbot/zvuk-station-player)** — плеер «Звука»
+- **[zvuk-station-player](https://github.com/derangedabbot/zvuk-yandex-station-player)** — плеер «Звука»
   для этой же станции: Rust, один статический бинарник. Играет «Мой поток», управляется из
   панели и голосом. Собран поверх этой инфраструктуры (root, набор musl-утилит, панель,
   распорядитель звука).
