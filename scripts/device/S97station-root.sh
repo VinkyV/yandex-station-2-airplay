@@ -5,7 +5,7 @@ case "$1" in
   start)
     mount -o remount,rw / 2>/dev/null
     mkdir -p /data/quasar
-    touch /data/quasar/activate_adb_quasmodrom /data/quasar/activate_network_adb
+    touch /data/quasar/activate_adb_quasmodrom /data/quasar/activate_network_adb 2>/dev/null
 
     T=/data/local/opt/airplay
     L=/data/local/opt/tools/lib/ld-musl-aarch64.so.1
@@ -24,6 +24,10 @@ case "$1" in
     # AirPlay: поднимаем после того, как появятся /data и звуковая карта
     [ -x /data/local/bin/boot-airplay.sh ] && \
       start-stop-daemon -S -b -m -p /run/boot-airplay.pid -x /bin/sh -- /data/local/bin/boot-airplay.sh
+
+    # слушатель локального IPC Алисы (голосовые триггеры)
+    [ -x /data/local/bin/alice-voice.sh ] && \
+      start-stop-daemon -S -b -m -p /run/alice-voice.pid -x /bin/sh -- /data/local/bin/alice-voice.sh
 
     # веб-панель (только домашняя сеть)
     [ -x /data/local/bin/panel-server.sh ] && \
