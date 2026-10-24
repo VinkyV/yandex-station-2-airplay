@@ -8,7 +8,9 @@ L=$T2/lib/ld-musl-aarch64.so.1
 [ -x "$L" ] || L=/data/local/opt/tools/lib/ld-musl-aarch64.so.1
 export LD_LIBRARY_PATH=$T2/lib:/data/local/opt/tools/lib
 export DBUS_SYSTEM_BUS_ADDRESS="$(cat /run/dbus/airplay.addr 2>/dev/null)"
-D="$L --library-path $LD_LIBRARY_PATH $T2/bin/dbus-send --system --dest=org.mpris.MediaPlayer2.ShairportSync /org/mpris/MediaPlayer2"
+# --print-reply обязателен: без него dbus-send отправит вызов и тут же закроет
+# соединение, а приёмник отменит обработчик — команда молча пропадёт.
+D="$L --library-path $LD_LIBRARY_PATH $T2/bin/dbus-send --system --print-reply --dest=org.mpris.MediaPlayer2.ShairportSync /org/mpris/MediaPlayer2"
 
 session() {
   for t in /proc/net/tcp /proc/net/tcp6; do
