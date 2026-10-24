@@ -1,0 +1,12 @@
+#!/bin/sh
+# Автозапуск USB-host на Станции Midi. Ставится в /etc/init.d/S97otg-host.
+# Запускает otg-host.sh через паузу: /data уже смонтирован, модули и devmem доступны.
+case "$1" in
+  start)
+    ( sleep 10; [ -x /data/otg/otg-host.sh ] && /data/otg/otg-host.sh ) >/dev/null 2>&1 &
+    ;;
+  stop)
+    [ -x /data/otg/otg-off.sh ] && /data/otg/otg-off.sh
+    ;;
+esac
+exit 0

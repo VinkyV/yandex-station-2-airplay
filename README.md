@@ -139,6 +139,18 @@ scripts/
 включены — соберите сами, см. [`docs/03-airplay.md`](docs/03-airplay.md) и
 [`docs/05-tools.md`](docs/05-tools.md).
 
+## USB-host: флешки, SD-карты, Ethernet
+
+Порт Type-C на Станции 2 умеет быть хостом — производитель просто не коммутирует его: по
+умолчанию он отдан gadget-контроллеру, а xHCI при загрузке умирает (`xHCI host not responding`).
+Переключение — четыре регистра USB2-PHY, всё в рантайме. Проверено: хаб, флешка FAT32, SD-карта
+в картридере, USB-Ethernet (`eth0`). Есть защита от бутлупа и откат без перезагрузки.
+
+Рецепт у нас: [`docs/12-usb-host.md`](docs/12-usb-host.md), скрипты —
+[`scripts/device/otg/`](scripts/device/otg/). Основа — рецепт для Станции Лайт с
+[hackalice.me](https://hackalice.me/recipes/usb-host/) ([Marker284/yandex-station-extended](https://github.com/Marker284/yandex-station-extended));
+наша часть — проверка на Midi, автозапуск и грабли.
+
 ## Веб-панель
 
 Чтобы не лезть в SSH из-за каждой мелочи — страница на `socat` (в busybox этой прошивки нет
