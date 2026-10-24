@@ -2,16 +2,44 @@
 # Слушатель локального IPC Алисы (127.0.0.1:9875).
 # Читает кадры: 4 байта длины (LE) + protobuf. Внутри — финальный текст распознавания.
 # Ищет фразы из /data/local/etc/voice-triggers.txt (по одной в строке, UTF-8)
-# и пишет совпадения в лог. Действие подключается в hook().
+# и отдаёт их в hook(), где фраза превращается в команду плеера «Звук».
 LOG=/data/local/tmp/alice-voice.log
 PAT=/data/local/etc/voice-triggers.txt
 FRAME=/tmp/alice-frame.bin
 STATE=/tmp/alice-voice.last
 COOLDOWN=5
+ZVUKD=/data/local/bin/zvukd
+ZVUKLOG=/data/local/tmp/zvukd.log
+
+# Одна копия: при перезапусках остаются жить подпроцессы прежних копий, и тогда
+# одна фраза срабатывает столько раз, сколько копий висит (проверено: 5 копий → 5 переключений).
+for d in /proc/[0-9]*; do
+  pid=${d#/proc/}
+  [ "$pid" = "$$" ] && continue
+  [ "$pid" = "$PPID" ] && continue
+  case "$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null || true)" in
+    *"/data/local/bin/alice-voice.sh"*|*"socat1 -u TCP:127.0.0.1:9875"*) kill "$pid" 2>/dev/null ;;
+  esac
+done
 
 hook() { # $1 — сработавшая фраза
-  # Пока только фиксируем. Сюда будет подключён запуск плеера «Звук».
   echo "$(date): СРАБОТАЛО «$1»" >> "$LOG"
+  [ -x "$ZVUKD" ] || return 0
+  case "$1" in
+    *ыключи*|*стоп*)      CMD=stop ;;
+    *ауза*)               CMD=pause ;;
+    *родолж*)             CMD=resume ;;
+    *ледующий*|*альше*)   CMD=next ;;
+    *)                    CMD=flow ;;
+  esac
+  # в фоне: запуск потока качает трек несколько секунд, слушатель ждать не должен.
+  # Для «продолжи»/«дальше» сначала выжидаем: её облако отвечает позже нас и на эти
+  # слова включает СВОЙ поток — без паузы он затирает наш файл (проверено голосом).
+  case "$CMD" in
+    resume|next) DELAY=3 ;;
+    *)           DELAY=0 ;;
+  esac
+  ( sleep "$DELAY"; "$ZVUKD" "$CMD" >> "$ZVUKLOG" 2>&1 & )
 }
 
 while :; do
