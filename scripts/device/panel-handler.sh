@@ -134,6 +134,13 @@ status_json() {
   CORES=$(grep -c ^processor /proc/cpuinfo)
   KERN=$(uname -r)
 
+  # --- AirPlay: живая ли сессия (порт 7000, ESTABLISHED) ---
+  APS=0
+  for tt in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "$tt" ] || continue
+    awk 'FNR>1 { split($2,a,":"); if (a[length(a)]=="1B58" && $4=="01") f=1 } END { exit(f?0:1) }' "$tt" && { APS=1; break; }
+  done
+
   # --- плеер «Звук» ---
   ZS=off; ZT="—"
   ZOUT=$(/data/local/bin/zvukd status 2>/dev/null) || ZOUT=""
@@ -154,12 +161,18 @@ status_json() {
     ZSAV=$(printf '%s' "$ZOUT" | cut -d'|' -f11); ZSAV=${ZSAV:-0}
   fi
 
-  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"pcm\":\"$(pcm_owner)\",\"zvuk\":\"$ZS\",\"zvuk_title\":\"$ZT\",\"zvuk_cover\":\"$ZC\",\"zvuk_idx\":$ZI,\"zvuk_total\":$ZN,\"zvuk_pos\":$ZP,\"zvuk_dur\":$ZD,\"zvuk_album_id\":\"$ZAID\",\"zvuk_album\":\"$ZAL\",\"zvuk_saved\":$ZSAV,\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\",\"load1\":\"$L1\",\"load5\":\"$L5\",\"load15\":\"$L15\",\"procs\":\"$PROCS\",\"cpu\":$CPUPCT,\"mem_total\":${MEMT:-0},\"mem_used\":${MEMU:-0},\"mem_pct\":$MEMPCT,\"root\":\"${ROOT:-—}\",\"data\":\"${DATA:-—}\",\"tee\":\"${TEE:-—}\",\"model\":\"${MODEL:-—}\",\"cores\":${CORES:-0},\"kernel\":\"${KERN:-—}\"}"
+  echo "{\"fw\":\"${FW:-—}\",\"shairport\":$SH,\"airplay\":$APS,\"nqptp\":$NQ,\"avahi\":$AV,\"mediad\":$MD,\"updatesd\":$UP,\"listen\":\"${LPORT}\",\"playing\":$EST,\"pcm\":\"$(pcm_owner)\",\"zvuk\":\"$ZS\",\"zvuk_title\":\"$ZT\",\"zvuk_cover\":\"$ZC\",\"zvuk_idx\":$ZI,\"zvuk_total\":$ZN,\"zvuk_pos\":$ZP,\"zvuk_dur\":$ZD,\"zvuk_album_id\":\"$ZAID\",\"zvuk_album\":\"$ZAL\",\"zvuk_saved\":$ZSAV,\"uptime\":$((UPT/60)),\"free\":\"${FREE:--}\",\"temp\":$TEMP,\"ip\":\"${IP:-—}\",\"ssid\":\"${SSID:-—}\",\"band\":\"${BAND:-—}\",\"load1\":\"$L1\",\"load5\":\"$L5\",\"load15\":\"$L15\",\"procs\":\"$PROCS\",\"cpu\":$CPUPCT,\"mem_total\":${MEMT:-0},\"mem_used\":${MEMU:-0},\"mem_pct\":$MEMPCT,\"root\":\"${ROOT:-—}\",\"data\":\"${DATA:-—}\",\"tee\":\"${TEE:-—}\",\"model\":\"${MODEL:-—}\",\"cores\":${CORES:-0},\"kernel\":\"${KERN:-—}\"}"
 }
 
 do_action() {
   A=$(qval do)
   case "$A" in
+    airplay-prev)
+      send "text/plain; charset=utf-8" "$(/data/local/bin/airplay-ctl.sh prev >/dev/null 2>&1 && echo 'назад' || echo 'не вышло')" ;;
+    airplay-toggle)
+      send "text/plain; charset=utf-8" "$(/data/local/bin/airplay-ctl.sh toggle >/dev/null 2>&1 && echo 'пауза/играть' || echo 'не вышло')" ;;
+    airplay-next)
+      send "text/plain; charset=utf-8" "$(/data/local/bin/airplay-ctl.sh next >/dev/null 2>&1 && echo 'дальше' || echo 'не вышло')" ;;
     zvuk-flow)
       # запуск потока качает трек несколько секунд — панель не должна ждать
       ( /data/local/bin/zvukd flow >>/data/local/tmp/zvukd.log 2>&1 & )
@@ -356,6 +369,16 @@ pre{white-space:pre-wrap;margin:10px 0 0}
 </div>
 
 <div class="card">
+  <div class="hdr"><span class="dim">AirPlay</span><b id="v-airplay" class="dim">…</b></div>
+  <div class="grid" style="margin-top:8px">
+    <button data-a="airplay-prev">Назад</button>
+    <button data-a="airplay-toggle">Пауза / играть</button>
+    <button data-a="airplay-next">Дальше</button>
+  </div>
+  <div class="small">Управление тем, что играет с Mac или iPhone: команда уходит источнику</div>
+</div>
+
+<div class="card">
   <div class="hdr"><span class="dim">Очередь</span><b id="q-count" class="dim"></b></div>
   <div id="q-list"></div>
 </div>
@@ -403,6 +426,8 @@ function paint(s){
   nq.textContent=s.nqptp>0?'Работает':'Нет';cls(nq,s.nqptp>0);
   var pp=document.getElementById('v-port');
   pp.textContent=s.listen||'—';pp.className='dim';
+  var ap=document.getElementById('v-airplay');
+  if(ap){ap.textContent=s.airplay?'Активна':'Нет';cls(ap,!!s.airplay);}
   var md=document.getElementById('v-mediad');
   if(s.playing&&s.mediad===0){md.textContent='Уступлен AirPlay';md.className='dim'}
   var u=document.getElementById('v-upd');

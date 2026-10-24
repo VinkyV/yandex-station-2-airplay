@@ -1,0 +1,193 @@
+diff --git a/ap2_event_message_handler.c b/ap2_event_message_handler.c
+index 457416a..08bc854 100644
+--- a/ap2_event_message_handler.c
++++ b/ap2_event_message_handler.c
+@@ -106,6 +106,24 @@ ssize_t ap2_event_port_post_command(rtsp_conn_info *conn, plist_t command) {
+   return result;
+ }
+ 
++// Обратное управление для AirPlay 2: POST /command с plist
++// {"type": "sendMediaRemoteCommand", "modernMediaRemoteCommand": <n>}
++// Номера как у Apple: 0 play, 1 pause, 2 toggle, 3 stop, 4 next, 5 previous.
++ssize_t ap2_event_send_modern_media_remote_command(rtsp_conn_info *conn,
++                                                   unsigned int command_number) {
++  ssize_t result = -1;
++  plist_t command_plist = plist_new_dict();
++  if (command_plist != NULL) {
++    plist_dict_set_item(command_plist, "type", plist_new_string("sendMediaRemoteCommand"));
++    plist_dict_set_item(command_plist, "modernMediaRemoteCommand", plist_new_uint(command_number));
++    result = ap2_event_port_post_command(conn, command_plist);
++    plist_free(command_plist);
++    debug(1, "Connection %d: media remote command %u sent on the event port, result %zd.",
++          conn->connection_number, command_number, result);
++  }
++  return result;
++}
++
+ ssize_t ap2_event_send_update_info(rtsp_conn_info *conn) {
+   // sends the updateInfo plist on the event port
+   ssize_t result = -1;
+diff --git a/ap2_event_receiver.c b/ap2_event_receiver.c
+index f7923a4..e7ed24b 100644
+--- a/ap2_event_receiver.c
++++ b/ap2_event_receiver.c
+@@ -44,6 +44,8 @@ void ap2_event_receiver_cleanup_handler(void *arg) {
+   pthread_mutex_lock(&conn->event_sender_mutex);
+   pthread_cleanup_push(mutex_unlock, &conn->event_sender_mutex);
+   safe_socket_close(&conn->event_channel_fd);
++  if (get_active_ap2_event_connection() == conn)
++    set_active_ap2_event_connection(NULL);
+   pthread_cleanup_pop(1); // unlock the mutex
+ 
+   if (conn->airplay_gid != NULL) {
+@@ -71,6 +73,7 @@ void *ap2_event_receiver(void *arg) {
+       eintr_checked_accept(conn->event_socket, (struct sockaddr *)&remote_addr, &addr_size);
+   pthread_cleanup_pop(1); // unlock the mutex
+   if (conn->event_channel_fd > 0) {
++    set_active_ap2_event_connection(conn);
+     debug(2,
+           "Connection %d: ap2_event_receiver accepted a connection on socket %d and moved to a new "
+           "socket %d.",
+diff --git a/mpris-service.c b/mpris-service.c
+index 71e254f..5079f20 100644
+--- a/mpris-service.c
++++ b/mpris-service.c
+@@ -40,6 +40,7 @@
+ #endif
+ 
+ #include "metadata/hub.h"
++#include "ap2_event_message_handler.h"
+ #include "mpris-service.h"
+ #include "utilities/exit.h"
+ 
+@@ -240,38 +241,62 @@ static gboolean on_handle_quit(MediaPlayer2 *skeleton, GDBusMethodInvocation *in
+   return TRUE;
+ }
+ 
+-static gboolean on_handle_next(MediaPlayer2Player *skeleton, GDBusMethodInvocation *invocation,
+-                               __attribute__((unused)) gpointer user_data) {
++// Обратные команды источнику. Для AirPlay 2 DACP не работает (источник не
++// присылает DACP-ID и не публикует _dacp._tcp), поэтому команда уходит plist-ом
++// sendMediaRemoteCommand на канал событий аудио-соединения (обсуждение #2262).
++static void send_remote_command(const char *name) {
++#ifdef CONFIG_AIRPLAY_2
++  rtsp_conn_info *conn = get_active_ap2_event_connection();
++  if (conn != NULL && conn->event_channel_fd > 0 &&
++      conn->airplay_stream_category != remote_control_stream) {
++    int number = -1;
++    if (!strcmp(name, "play"))
++      number = 0;
++    else if (!strcmp(name, "pause"))
++      number = 1;
++    else if (!strcmp(name, "playpause"))
++      number = 2;
++    else if (!strcmp(name, "stop"))
++      number = 3;
++    else if (!strcmp(name, "nextitem"))
++      number = 4;
++    else if (!strcmp(name, "previtem"))
++      number = 5;
++    if (number >= 0) {
++      ap2_event_send_modern_media_remote_command(conn, number);
++      return;
++    }
++  }
++#endif
+ #ifdef CONFIG_DACP_CLIENT
+-  send_simple_dacp_command("nextitem");
++  send_simple_dacp_command(name);
+ #endif
++}
++
++static gboolean on_handle_next(MediaPlayer2Player *skeleton, GDBusMethodInvocation *invocation,
++                               __attribute__((unused)) gpointer user_data) {
++send_remote_command("nextitem");
+   media_player2_player_complete_next(skeleton, invocation);
+   return TRUE;
+ }
+ 
+ static gboolean on_handle_previous(MediaPlayer2Player *skeleton, GDBusMethodInvocation *invocation,
+                                    __attribute__((unused)) gpointer user_data) {
+-#ifdef CONFIG_DACP_CLIENT
+-  send_simple_dacp_command("previtem");
+-#endif
++send_remote_command("previtem");
+   media_player2_player_complete_previous(skeleton, invocation);
+   return TRUE;
+ }
+ 
+ static gboolean on_handle_stop(MediaPlayer2Player *skeleton, GDBusMethodInvocation *invocation,
+                                __attribute__((unused)) gpointer user_data) {
+-#ifdef CONFIG_DACP_CLIENT
+-  send_simple_dacp_command("stop");
+-#endif
++send_remote_command("stop");
+   media_player2_player_complete_stop(skeleton, invocation);
+   return TRUE;
+ }
+ 
+ static gboolean on_handle_pause(MediaPlayer2Player *skeleton, GDBusMethodInvocation *invocation,
+                                 __attribute__((unused)) gpointer user_data) {
+-#ifdef CONFIG_DACP_CLIENT
+-  send_simple_dacp_command("pause");
+-#endif
++send_remote_command("pause");
+   media_player2_player_complete_pause(skeleton, invocation);
+   return TRUE;
+ }
+@@ -279,18 +304,14 @@ static gboolean on_handle_pause(MediaPlayer2Player *skeleton, GDBusMethodInvocat
+ static gboolean on_handle_play_pause(MediaPlayer2Player *skeleton,
+                                      GDBusMethodInvocation *invocation,
+                                      __attribute__((unused)) gpointer user_data) {
+-#ifdef CONFIG_DACP_CLIENT
+-  send_simple_dacp_command("playpause");
+-#endif
++send_remote_command("playpause");
+   media_player2_player_complete_play_pause(skeleton, invocation);
+   return TRUE;
+ }
+ 
+ static gboolean on_handle_play(MediaPlayer2Player *skeleton, GDBusMethodInvocation *invocation,
+                                __attribute__((unused)) gpointer user_data) {
+-#ifdef CONFIG_DACP_CLIENT
+-  send_simple_dacp_command("play");
+-#endif
++send_remote_command("play");
+   media_player2_player_complete_play(skeleton, invocation);
+   return TRUE;
+ }
+diff --git a/player.h b/player.h
+index a5b2c27..3d30226 100644
+--- a/player.h
++++ b/player.h
+@@ -624,6 +624,11 @@ size_t get_ssrc_block_length(ssrc_t ssrc);
+ 
+ const char *get_category_string(airplay_stream_c cat);
+ 
++// Активное AirPlay 2 соединение, у которого открыт канал событий: через него
++// отправляются обратные команды плееру-источнику (см. ap2_event_message_handler.c).
++void set_active_ap2_event_connection(rtsp_conn_info *conn);
++rtsp_conn_info *get_active_ap2_event_connection(void);
++
+ int ssrc_is_recognised(ssrc_t ssrc);
+ int ssrc_is_aac(ssrc_t ssrc); // used to decide if a mute might be needed (AAC only)
+ void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc); // also sets up timing stuff
+diff --git a/rtsp.c b/rtsp.c
+index 303d3b4..5d66961 100644
+--- a/rtsp.c
++++ b/rtsp.c
+@@ -4707,3 +4707,14 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
+   debug(1, "Fell out of the RTSP select loop -- this should never happen!");
+   pthread_exit(NULL);
+ }
++
++// ---- обратное управление AirPlay 2 ----
++// Указатель на соединение, у которого открыт канал событий. Через него можно
++// отправить команду источнику (пауза/дальше/назад). Доступ — из mpris-service.c.
++static rtsp_conn_info *active_ap2_event_connection = NULL;
++
++void set_active_ap2_event_connection(rtsp_conn_info *conn) {
++  active_ap2_event_connection = conn;
++}
++
++rtsp_conn_info *get_active_ap2_event_connection(void) { return active_ap2_event_connection; }

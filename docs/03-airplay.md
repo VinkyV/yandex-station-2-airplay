@@ -213,7 +213,55 @@ release_for_airplay() {
 
 Полный скрипт: [`scripts/device/audio-owner.sh`](../scripts/device/audio-owner.sh).
 
-## Шаг 6. Автозапуск
+## Шаг 6. Управление AirPlay 2: пауза, дальше, назад
+
+Обратного управления для AirPlay 2 официально нет. DACP (путь AirPlay 1) у нас не работает
+и не заработает: источник не присылает `DACP-ID` в SETUP и не публикует `_dacp._tcp` —
+проверено `dns-sd`, в сети не видно ни одной такой службы. Соответственно `send_simple_dacp_command()`
+всегда упирается в «no port specified».
+
+Рабочий механизм — другой: команда уходит plist-ом на **канал событий аудио-сессии**
+(найдено в обсуждении shairport-sync [#2262](https://github.com/mikebrady/shairport-sync/discussions/2262)):
+
+```
+POST /command RTSP/1.0
+Content-Type: application/x-apple-binary-plist
+
+{ "type": "sendMediaRemoteCommand", "modernMediaRemoteCommand": <n> }
+```
+
+Номера как у Apple: `0` play, `1` pause, `2` toggle, `3` stop, `4` next, `5` previous.
+
+Три вещи, без которых не работает:
+
+1. **Именно аудио-соединение, не remote-control.** На канале `SETUP (RC)` тот же endpoint carries
+   protobuf-сообщения MediaRemote; если писать туда plist, приёмника выбрасывает из сессии.
+2. **Канал должен быть уже открыт.** `event_channel_fd > 0` — иначе отправлять некуда
+   (проверяется в MPRIS-обработчике).
+3. **Сборка с MPRIS.** Опции `--with-dbus` в 5.5 нет (configure её не знает); нужный канал —
+   `--with-mpris-interface`, он тянет `libgio`/`libglib`. На колонку пришлось долить 10 библиотек,
+   системные версии 32-битные и не подходят.
+
+Что добавлено в исходники:
+
+* `ap2_event_send_modern_media_remote_command()` — отправка plist-а на канал событий;
+* реестр активного соединения в `rtsp.c` (`get_active_ap2_event_connection()`), заполняется
+  в `ap2_event_receiver.c` при открытии канала;
+* MPRIS-методы (`Next`, `Previous`, `PlayPause`, `Play`, `Pause`, `Stop`) сначала пробуют
+  AP2-путь, иначе падают в DACP — для классического AirPlay поведение не изменилось.
+
+Управление с колонки:
+
+```sh
+/data/local/bin/airplay-ctl.sh next|prev|pause|play|toggle|stop|status
+```
+
+Оно же навешено на панель (карточка «AirPlay») и на голос: если сессия активна, «дальше»/«назад»/
+«пауза»/«продолжи» уходят источнику, а не нашему плееру.
+
+**Проверено на живом Mac:** `next` переключает трек, `toggle` ставит на паузу и снимает её.
+
+## Шаг 7. Автозапуск
 
 При загрузке `S97station-root` стартует слишком рано: `/data` ещё не смонтирован, `/dev/snd` ещё
 нет. Поэтому автозапуск AirPlay вынесен в `boot-airplay.sh`: он ждёт появления

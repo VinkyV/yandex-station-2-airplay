@@ -24,6 +24,23 @@ done
 
 hook() { # $1 — сработавшая фраза
   echo "$(date): СРАБОТАЛО «$1»" >> "$LOG"
+  # Если идёт AirPlay — команду адресуем источнику (Mac/iPhone), а не нашему плееру.
+  AP=/data/local/bin/airplay-ctl.sh
+  if [ -x "$AP" ] && "$AP" status 2>/dev/null | head -1 | grep -q 'активен'; then
+    case "$1" in
+      *ыключи*|*стоп*)     APCMD=stop ;;
+      *ауза*)              APCMD=pause ;;
+      *родолж*)            APCMD=play ;;
+      *азад*|*редыдущ*)    APCMD=prev ;;
+      *ледующий*|*альше*)  APCMD=next ;;
+      *)                   APCMD= ;;
+    esac
+    if [ -n "$APCMD" ]; then
+      echo "$(date): AirPlay получает «$APCMD»" >> "$LOG"
+      ( "$AP" "$APCMD" >> "$LOG" 2>&1 & )
+      return 0
+    fi
+  fi
   [ -x "$ZVUKD" ] || return 0
   case "$1" in
     *ыключи*|*стоп*)      CMD=stop ;;
@@ -38,9 +55,13 @@ hook() { # $1 — сработавшая фраза
   # и включает свой поток поверх нашего (проверено голосом).
   case "$CMD" in
     resume|next)
-      ( "$ZVUKD" "$CMD" >> "$ZVUKLOG" 2>&1
-        sleep 2; "$ZVUKD" reassert >> "$ZVUKLOG" 2>&1
-        sleep 2; "$ZVUKD" replay-now >> "$ZVUKLOG" 2>&1 ) &
+      # Её облако отвечает позже нас и на «продолжи»/«дальше» включает свой поток.
+      # Ждём 3 с (её ответ уже прошёл) и ставим наш трек последним — он и выигрывает.
+      # Автоматические «возвраты» после этого не нужны и только вредят.
+      # 1.5 с: её поток стартует через ~0.3 с после команды (замер по mediad.log),
+      # значит мы гарантированно позже, но ждём меньше. `sleep 1.5` на busybox
+      # обрезается до целого, поэтому дробная пауза — через usleep.
+      ( usleep 1500000; "$ZVUKD" "$CMD" >> "$ZVUKLOG" 2>&1 ) &
       ;;
     *)
       ( "$ZVUKD" "$CMD" >> "$ZVUKLOG" 2>&1 & )
