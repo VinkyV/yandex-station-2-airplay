@@ -164,25 +164,44 @@ DBUS_SYSTEM_BUS_ADDRESS="$(cat /run/dbus/airplay.addr)" \
 
 ## Шаг 5. Распорядитель звука
 
-Проблема: `maind --mediad` открывает `pcmC0D0p` и держит его. Пока он жив, `shairport-sync`
-получает `EBUSY` и молчит — AirPlay «подключается», но тишина.
+Проблема: `maind --mediad` открывает `pcmC0D0p` и держит его **постоянно** — даже когда ничего
+не играет. Пока он жив, `shairport-sync` получает `EBUSY` и молчит: AirPlay «подключается»,
+а звука нет.
 
-Решение — `audio-owner.sh`: раз в 4 секунды смотрит, есть ли **установленное** соединение на
-порт 5000.
+Решение — `audio-owner.sh`: раз в несколько секунд смотрит, есть ли **установленное соединение
+на порт приёмника** (7000 для AirPlay 2, 5000 для AirPlay 1).
 
-* есть → останавливает `maind --mediad` (звук уходит приёмнику);
-* нет → поднимает `maind --mediad` обратно.
+* есть → освобождает устройство под приёмник (`maind --mediad` убивается);
+* нет → поднимает `maind --mediad` обратно, Алиса снова говорит.
 
 ```sh
-playing() { netstat -tn 2>/dev/null | grep -q ':5000 .*ESTABLISHED'; }
+# Живая ли AirPlay-сессия (порт 7000 = 0x1B58, состояние 01 = ESTABLISHED)
+airplay_session() {
+  for t in /proc/net/tcp /proc/net/tcp6; do
+    awk 'FNR>1 { split($2,a,":"); if (a[length(a)]=="1B58" && $4=="01") f=1 } END { exit(f?0:1) }' "$t" && return 0
+  done
+  return 1
+}
 
-start_mediad() {
-  ps w | grep -q '[m]aind --mediad' && return
-  cd /data/quasar || cd /
-  MALLOC_ARENA_MAX=2 CA_CERTIFICATES=/system/vendor/quasar/ca-certificates.crt \
-    nohup /system/vendor/quasar/maind --mediad >> /data/quasar/mediad.log 2>&1 </dev/null &
+# Одного kill мало: супервизор Quasar поднимает mediad обратно и тот снова хватает ALSA.
+# Поэтому долбим, пока приёмник реально не займёт устройство.
+release_for_airplay() {
+  i=0
+  while [ "$i" -lt 40 ]; do
+    sp_holds_pcm && return 0
+    airplay_session || return 0
+    kill -9 $(pids_matching '/system/vendor/quasar/maind --mediad' | head -1) 2>/dev/null
+    sleep 0.3; i=$((i+1))
+  done
+  return 1
 }
 ```
+
+**Ловушка, на которой мы потеряли вечер.** Нельзя определять «AirPlay играет» по признаку
+«приёмник уже держит ALSA». Устройство держит `mediad`, приёмник его не получит никогда —
+признак всегда ложный, скрипт ждёт приёмник, приёмник ждёт скрипт. Тишина, причём без единой
+ошибки: в логе приёмника только `device is busy` / `no longer busy` по кругу. Признаком должна
+быть **сессия (TCP)**, а не владение устройством.
 
 Две тонкости, без которых схема разваливается:
 
@@ -227,6 +246,7 @@ netstat -tn | grep queue              # ждём ESTABLISHED при игре
 | Порт 5000 слушает, телефон не видит | shairport перезапущен с пустым адресом шины и ушёл на системную шину | адрес всегда из `/run/dbus/airplay.addr`; после перезагрузки `/run` пуст |
 | Устройство то появляется, то нет | avahi с чужим именем хоста конфликтует с mDNS колонки | имя = имени колонки |
 | AirPlay «подключён», звука нет | `maind --mediad` держит `pcmC0D0p` | распорядитель убивает демон при подключении |
+| AirPlay «подключён», звука нет, в логе приёмника `busy`/`free` по кругу | признак «играет» считали по владению ALSA — а владеет ею `mediad`, круг замкнулся | признак = установленное соединение на 7000, устройство отдавать в цикле |
 | После AirPlay Алиса молчит | приёмник не отпустил ALSA | перезапуск приёмника после сессии |
 | Алиса молчит сразу после старта | `mediad` не поднят после падения | поднимать самому, с окружением |
 | `aplay`/avahi падают с `Exec format error` | тянется 32-битный системный ALSA-конфиг | свой `ALSA_CONFIG_PATH` + `LD_LIBRARY_PATH` |

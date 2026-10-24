@@ -28,9 +28,46 @@ LED_PATTERN=tricolor
 
 sp_pid() { ps w | awk '/[s]hairport-sync -c \/data\/local\/opt\/airplay2/ {print $1}' | head -1; }
 
+# Живая ли AirPlay-сессия: установленное соединение на порт 7000 (0x1B58).
+# Именно это, а не «приёмник уже держит ALSA», потому что устройство держит mediad
+# и приёмник его никогда не получит — получался замкнутый круг и тишина.
+airplay_session() {
+  for t in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "$t" ] || continue
+    awk 'FNR>1 { split($2,a,":"); if (a[length(a)]=="1B58" && $4=="01") f=1 } END { exit(f?0:1) }' "$t" && return 0
+  done
+  return 1
+}
+
+# Держит ли приёмник устройство воспроизведения прямо сейчас
+sp_holds_pcm() {
+  P=$(sp_pid)
+  [ -z "$P" ] && return 1
+  for f in /proc/$P/fd/*; do
+    t=$(readlink "$f" 2>/dev/null)
+    case "$t" in *pcmC0D0p*) return 0;; esac
+  done
+  return 1
+}
+
+# Настойчиво освобождаем устройство под AirPlay: супервизор поднимает mediad обратно,
+# поэтому одного kill мало — долбим, пока приёмник реально не займёт ALSA.
+release_for_airplay() {
+  i=0
+  while [ "$i" -lt 40 ]; do
+    sp_holds_pcm && return 0
+    airplay_session || return 0
+    P=$(pids_matching '/system/vendor/quasar/maind --mediad' | head -1)
+    [ -n "$P" ] && kill -9 "$P" 2>/dev/null
+    sleep 0.3
+    i=$((i+1))
+  done
+  return 1
+}
+
 playing() {
-  # Признак игры — приёмник держит ALSA-устройство воспроизведения.
-  # Проверять по TCP нельзя: AirPlay 2 держит служебное соединение и после остановки.
+  # Играет, если сессия есть ИЛИ приёмник уже занял устройство.
+  airplay_session && return 0
   P=$(sp_pid)
   [ -z "$P" ] && return 1
   for f in /proc/$P/fd/*; do
@@ -89,6 +126,18 @@ revive_receiver() {
   fi
 }
 
+# Наш плеер «Звука» держит звук так же, как AirPlay: пока он играет,
+# кольцо должно дышать зелёным, иначе распорядитель его гасит каждые 4 секунды.
+zvuk_playing() {
+  for p in /proc/[0-9]*; do
+    c=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null || true)
+    case "$c" in
+      *"/usr/bin/aplay"*) ls -l "$p/fd" 2>/dev/null | grep -q pcmC0D0p && return 0 ;;
+    esac
+  done
+  return 1
+}
+
 while :; do
   if playing; then
     if [ "$AIRPLAY_WAS_ON" = "0" ]; then
@@ -101,12 +150,15 @@ while :; do
     if [ -x "$LED" ] && [ ! -f /run/led-lamp.pid ]; then
       "$LED" start "$LED_PATTERN" >/dev/null 2>&1
     fi
-    PID=$(pids_matching '/system/vendor/quasar/maind --mediad' | head -1)
-    [ -n "$PID" ] && kill "$PID" 2>/dev/null
+    release_for_airplay
   else
-    # AirPlay не играет — подсветку гасим всегда, даже если распорядитель
-    # перезапускался и не помнит, что её включал
-    [ -x "$LED" ] && [ -f /run/led-lamp.pid ] && "$LED" stop >/dev/null 2>&1
+    # AirPlay не играет: если звук держит наш плеер «Звука» — дышим зелёным,
+    # иначе гасим (даже если распорядитель перезапускался и не помнит про свет)
+    if zvuk_playing; then
+      [ -x "$LED" ] && [ ! -f /run/led-lamp.pid ] && "$LED" start green >/dev/null 2>&1
+    else
+      [ -x "$LED" ] && [ -f /run/led-lamp.pid ] && "$LED" stop >/dev/null 2>&1
+    fi
 
     ps w | grep -q '[s]hairport-sync -c /data/local/opt/airplay2' || revive_receiver
 
