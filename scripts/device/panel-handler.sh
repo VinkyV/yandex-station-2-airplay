@@ -319,6 +319,16 @@ pre{white-space:pre-wrap;margin:10px 0 0}
 </div>
 
 <div class="cols">
+<div class="card">
+  <div class="hdr"><span class="dim">AirPlay</span><b id="v-airplay" class="dim">…</b></div>
+  <div class="grid" style="margin-top:8px">
+    <button data-a="airplay-prev">Назад</button>
+    <button data-a="airplay-toggle">Пауза / играть</button>
+    <button data-a="airplay-next">Дальше</button>
+  </div>
+  <div class="small">Управление тем, что играет с Mac или iPhone: команда уходит источнику</div>
+</div>
+
 <div style="grid-column:1/-1;margin-bottom:6px" class="dim">Плеер</div>
 
 <div class="card">
@@ -366,16 +376,6 @@ pre{white-space:pre-wrap;margin:10px 0 0}
     <button data-a="zvuk-resume-last" id="z-resume" style="display:none">Продолжить последнее</button>
   </div>
   <div class="small">Музыка из Звука по твоему вкусу, без остановки</div>
-</div>
-
-<div class="card">
-  <div class="hdr"><span class="dim">AirPlay</span><b id="v-airplay" class="dim">…</b></div>
-  <div class="grid" style="margin-top:8px">
-    <button data-a="airplay-prev">Назад</button>
-    <button data-a="airplay-toggle">Пауза / играть</button>
-    <button data-a="airplay-next">Дальше</button>
-  </div>
-  <div class="small">Управление тем, что играет с Mac или iPhone: команда уходит источнику</div>
 </div>
 
 <div class="card">
