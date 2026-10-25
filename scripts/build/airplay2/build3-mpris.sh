@@ -17,7 +17,7 @@ make distclean >/dev/null 2>&1 || true
 export PKG_CONFIG_PATH=/work/ffout/lib/pkgconfig
 ./configure --sysconfdir=/etc --with-alsa --with-soxr --with-avahi \
   --with-ssl=openssl --with-airplay-2 --with-metadata --with-piddir=/run \
-  --with-dbus --with-mpris-interface \
+  --with-dbus-interface --with-mpris-interface \
   >/tmp/cfg3.log 2>&1 || { tail -40 /tmp/cfg3.log; exit 1; }
 grep -iE "dbus|mpris|airplay|avcodec" /tmp/cfg3.log | tail -10
 make -j4 >/tmp/make3.log 2>&1 || { tail -40 /tmp/make3.log; exit 1; }
