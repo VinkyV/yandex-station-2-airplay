@@ -1,0 +1,77 @@
+name: Build AirPlay 2 (aarch64, musl)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_ref:
+        description: "Ветка/тег ffmpeg"
+        default: "n7.1.1"
+      shairport_ref:
+        description: "Тег shairport-sync"
+        default: "5.5.1"
+  push:
+    tags: ["airplay2-*"]
+
+env:
+  WORK: scripts/build/airplay2
+
+jobs:
+  build:
+    # Нативный arm64-раннер: без qemu, сборка в разы быстрее
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sources
+        run: |
+          set -e
+          cd "$WORK"
+          mkdir -p src out
+          git clone --depth=1 -b "${{ inputs.ffmpeg_ref || 'n7.1.1' }}" https://github.com/FFmpeg/FFmpeg.git src/ffmpeg
+          git clone --depth=1 -b "${{ inputs.shairport_ref || '5.5.1' }}" https://github.com/mikebrady/shairport-sync.git src/shairport-sync
+
+      - name: Apply remote-control.patch
+        run: |
+          set -e
+          cd "$WORK/src/shairport-sync"
+          patch -p1 < ../../remote-control.patch
+          # патч не объявляет новую функцию в заголовке — добавляем, иначе mpris-service.c не соберётся
+          if ! grep -q ap2_event_send_modern_media_remote_command ap2_event_message_handler.h; then
+            sed -i '/ap2_event_send_update_info/a ssize_t ap2_event_send_modern_media_remote_command(rtsp_conn_info *conn, unsigned int command_number);' ap2_event_message_handler.h
+          fi
+          grep -n modern_media_remote_command ap2_event_message_handler.h
+
+      - name: Cache static ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORK }}/ffout
+          key: ffout-${{ inputs.ffmpeg_ref || 'n7.1.1' }}-${{ hashFiles('scripts/build/airplay2/build2.sh') }}
+
+      - name: Build in alpine (ffmpeg, nqptp, shairport-sync + MPRIS)
+        run: |
+          cd "$WORK"
+          mkdir -p ffout
+          docker run --rm \
+            -v "$PWD:/work" -v "$PWD/out:/out" alpine:3.24 \
+            sh -c 'sh /work/build2.sh && sh /work/build-nqptp.sh && sh /work/build3-mpris.sh'
+
+      - name: Package
+        run: |
+          cd "$WORK"
+          sudo chown -R "$USER" out
+          cp shairport-sync.conf run-sps.sh out/ 2>/dev/null || true
+          tar -C out -czf airplay2-aarch64.tar.gz .
+          ls -lh airplay2-aarch64.tar.gz
+          find out -maxdepth 2 | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airplay2-aarch64
+          path: scripts/build/airplay2/airplay2-aarch64.tar.gz
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: scripts/build/airplay2/airplay2-aarch64.tar.gz
