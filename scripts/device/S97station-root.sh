@@ -26,8 +26,17 @@ case "$1" in
       start-stop-daemon -S -b -m -p /run/boot-airplay.pid -x /bin/sh -- /data/local/bin/boot-airplay.sh
 
     # слушатель локального IPC Алисы (голосовые триггеры)
-    [ -x /data/local/bin/alice-voice.sh ] && \
-      start-stop-daemon -S -b -m -p /run/alice-voice.pid -x /bin/sh -- /data/local/bin/alice-voice.sh
+    # одна копия: живой pid в pid-файле или устаревший (иначе start-stop-daemon
+    # отказывается стартовать, потому что pid указывает на любой живой /bin/sh)
+    av_pid=$(cat /run/alice-voice.pid 2>/dev/null)
+    case "$(tr '\0' ' ' < /proc/${av_pid:-0}/cmdline 2>/dev/null)" in
+      *alice-voice.sh*) ;;
+      *)
+        rm -f /run/alice-voice.pid
+        [ -x /data/local/bin/alice-voice.sh ] && \
+          start-stop-daemon -S -b -m -p /run/alice-voice.pid -x /bin/sh -- /data/local/bin/alice-voice.sh
+        ;;
+    esac
 
     # веб-панель (только домашняя сеть)
     [ -x /data/local/bin/panel-server.sh ] && \
