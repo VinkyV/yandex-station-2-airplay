@@ -35,7 +35,9 @@ jobs:
         run: |
           set -e
           cd "$WORK/src/shairport-sync"
-          patch -p1 < ../../remote-control.patch
+          # страховка: убираем CR и гарантируем перевод строки в конце файла патча
+          sed -e 's/\r$//' -e '$a\' ../../remote-control.patch > /tmp/rc.patch
+          patch -p1 < /tmp/rc.patch
           # патч не объявляет новую функцию в заголовке — добавляем, иначе mpris-service.c не соберётся
           if ! grep -q ap2_event_send_modern_media_remote_command ap2_event_message_handler.h; then
             sed -i '/ap2_event_send_update_info/a ssize_t ap2_event_send_modern_media_remote_command(rtsp_conn_info *conn, unsigned int command_number);' ap2_event_message_handler.h
