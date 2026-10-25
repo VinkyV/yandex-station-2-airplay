@@ -28,13 +28,16 @@ LED_PATTERN=tricolor
 
 sp_pid() { ps w | awk '/[s]hairport-sync -c \/data\/local\/opt\/airplay2/ {print $1}' | head -1; }
 
-# Живая ли AirPlay-сессия: установленное соединение на порт 7000 (0x1B58).
+# Живая ли AirPlay-сессия: ESTABLISHED на порт приёмника. До 5.6 AirPlay 2 слушал
+# фиксированный 7000 (0x1B58) и не смотрел на port из конфига; в 5.6+ берётся порт из
+# shairport-sync.conf (у нас 5000, 0x1388). Проверяем оба — иначе после обновления
+# распорядитель перестаёт видеть сессию, звук держит mediad и ALSA отвечает Resource busy.
 # Именно это, а не «приёмник уже держит ALSA», потому что устройство держит mediad
 # и приёмник его никогда не получит — получался замкнутый круг и тишина.
 airplay_session() {
   for t in /proc/net/tcp /proc/net/tcp6; do
     [ -r "$t" ] || continue
-    awk 'FNR>1 { split($2,a,":"); if (a[length(a)]=="1B58" && $4=="01") f=1 } END { exit(f?0:1) }' "$t" && return 0
+    awk 'FNR>1 { split($2,a,":"); if ((a[length(a)]=="1B58" || a[length(a)]=="1388") && $4=="01") f=1 } END { exit(f?0:1) }' "$t" && return 0
   done
   return 1
 }

@@ -15,7 +15,7 @@ D="$L --library-path $LD_LIBRARY_PATH $T2/bin/dbus-send --system --print-reply -
 session() {
   for t in /proc/net/tcp /proc/net/tcp6; do
     [ -r "$t" ] || continue
-    awk 'FNR>1 { split($2,a,":"); if (a[length(a)]=="1B58" && $4=="01") f=1 } END { exit(f?0:1) }' "$t" && return 0
+    awk 'FNR>1 { split($2,a,":"); if ((a[length(a)]=="1B58" || a[length(a)]=="1388") && $4=="01") f=1 } END { exit(f?0:1) }' "$t" && return 0
   done
   return 1
 }

@@ -138,7 +138,7 @@ status_json() {
   APS=0
   for tt in /proc/net/tcp /proc/net/tcp6; do
     [ -r "$tt" ] || continue
-    awk 'FNR>1 { split($2,a,":"); if (a[length(a)]=="1B58" && $4=="01") f=1 } END { exit(f?0:1) }' "$tt" && { APS=1; break; }
+    awk 'FNR>1 { split($2,a,":"); if ((a[length(a)]=="1B58" || a[length(a)]=="1388") && $4=="01") f=1 } END { exit(f?0:1) }' "$tt" && { APS=1; break; }
   done
 
   # --- плеер «Звук» ---

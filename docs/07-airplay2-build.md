@@ -52,6 +52,28 @@ make -j4
 
 Результат: `shairport-sync` (с AirPlay 2) и `nqptp`, плюс каталог `lib/`.
 
+## Совпадение версий nqptp и приёмника
+
+`shairport-sync` и `nqptp` жёстко связаны версией интерфейса разделяемой памяти: в строке версии
+это суффикс `smi10`, `smi11` и т.п. Если поставить новый приёмник со старым `nqptp`, он не
+стартует вообще, а в логе будет невнятное:
+
+```
+*fatal error: The NQPTP service can not be found. NQPTP must be installed and running to provide AirPlay 2 service.
+```
+
+При этом `nqptp` запущен — просто у него другая версия интерфейса. Проверять так:
+
+```sh
+# на колонке
+/data/local/opt/tools/lib/ld-musl-aarch64.so.1 --library-path .../lib \
+  /data/local/opt/airplay2/bin/nqptp -V      # Version: 1.2.9. Shared Memory Interface Version: smi11.
+```
+
+Суффикс `smiNN` в `shairport-sync -V` должен совпадать. Сборка 5.7-dev требует `smi11`, то есть
+`nqptp` 1.2.9; для 5.5.1 хватало 1.2.8 (`smi10`). Поэтому при обновлении приёмника пересобирайте
+и `nqptp`, а старый бинарник держите рядом для отката.
+
 ## Установка на колонку
 
 ```
