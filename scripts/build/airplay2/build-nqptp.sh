@@ -3,7 +3,7 @@
 set -e
 mkdir -p /out/bin /work/src
 cd /work/src
-[ -d nqptp ] || git clone --depth=1 https://github.com/mikebrady/nqptp.git
+[ -d nqptp ] || git clone --depth=1 -b 1.2.4 https://github.com/mikebrady/nqptp.git
 cd nqptp
 git log -1 --format='nqptp commit %h %s'
 autoreconf -fi >/dev/null 2>&1
