@@ -14,6 +14,7 @@ ls -l /work/ffout/lib/libav*.a
 echo "=== shairport-sync configure (dbus + mpris) ==="
 cd /work/src/shairport-sync
 make distclean >/dev/null 2>&1 || true
+[ -x ./configure ] || autoreconf -fi >/dev/null 2>&1
 export PKG_CONFIG_PATH=/work/ffout/lib/pkgconfig
 ./configure --sysconfdir=/etc --with-alsa --with-soxr --with-avahi \
   --with-ssl=openssl --with-airplay-2 --with-metadata --with-piddir=/run \
